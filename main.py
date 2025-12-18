@@ -1,4 +1,4 @@
-# main.py — Повна робоча версія v20.8 (асинхронна, кнопки миттєво, повне меню + фільтр + "Назад", без Updater)
+# main.py — v20.8 з патчем для Render/Python 3.13 (кнопки миттєво, без помилок)
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, ContextTypes, CommandHandler, CallbackQueryHandler, ConversationHandler, MessageHandler, filters
@@ -19,7 +19,6 @@ FREE_THRESHOLD = 1.5
 ALL_EXCHANGES = ['Bybit', 'Binance', 'Bitget', 'MEXC', 'OKX', 'KuCoin', 'HTX', 'Gate.io', 'BingX']
 TIMEZONES = ['UTC', 'Europe/Kiev', 'Europe/London', 'America/New_York', 'America/Chicago', 'Asia/Dubai', 'Asia/Singapore', 'Asia/Hong_Kong']
 
-# Стани для фільтра
 EXCHANGE, THRESHOLD, INTERVAL, TIMEZONE = range(4)
 
 init_db()
@@ -101,80 +100,6 @@ async def get_pro(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [[InlineKeyboardButton(f"Оплатити {PRO_PRICE_USDT} USDT", url=invoice_link)]]
     await query.edit_message_text("PRO-тариф — 50 USDT/міс\nОплата через @CryptoBot", reply_markup=InlineKeyboardMarkup(keyboard))
 
-async def filter_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user = get_user(query.from_user.id)
-    lang = user['language']
-    plan = get_plan(query.from_user.id)
-    keyboard = []
-    if plan == "PRO":
-        for ex in ALL_EXCHANGES:
-            keyboard.append([InlineKeyboardButton(ex, callback_data=f'ex_{ex}')])
-    else:
-        keyboard.append([InlineKeyboardButton("Bybit (FREE)", callback_data='ex_Bybit')])
-    keyboard.append([InlineKeyboardButton(get_text(lang, 'back_button'), callback_data='back_to_menu')])
-    await query.edit_message_text(get_text(lang, 'choose_exchange'), reply_markup=InlineKeyboardMarkup(keyboard))
-    return EXCHANGE
-
-async def back_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user = get_user(query.from_user.id)
-    lang = user['language']
-    plan = get_plan(query.from_user.id)
-    await query.edit_message_text(get_text(lang, 'start_message'), reply_markup=main_menu(lang, plan))
-    return ConversationHandler.END
-
-async def ex_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    exchange = query.data.split('_')[1]
-    user_id = query.from_user.id
-    add_or_update_user(user_id, {"exchange": exchange})
-    lang = get_user(user_id)['language']
-    keyboard = [[InlineKeyboardButton(get_text(lang, 'back_button'), callback_data='back_to_menu')]]
-    await query.edit_message_text(get_text(lang, 'settings_saved') + "\n\n" + get_text(lang, 'choose_threshold'), reply_markup=InlineKeyboardMarkup(keyboard))
-    return THRESHOLD
-
-async def threshold_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    threshold = float(update.message.text)
-    user_id = update.message.from_user.id
-    add_or_update_user(user_id, {"threshold": threshold})
-    lang = get_user(user_id)['language']
-    keyboard = [
-        [InlineKeyboardButton("1 хв", callback_data='int_1'), InlineKeyboardButton("2 хв", callback_data='int_2')],
-        [InlineKeyboardButton("5 хв", callback_data='int_5'), InlineKeyboardButton("10 хв", callback_data='int_10')],
-        [InlineKeyboardButton(get_text(lang, 'back_button'), callback_data='back_to_menu')]
-    ]
-    await update.message.reply_text(get_text(lang, 'settings_saved') + "\n\n" + get_text(lang, 'choose_interval'), reply_markup=InlineKeyboardMarkup(keyboard))
-    return INTERVAL
-
-async def interval_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    interval = int(query.data.split('_')[1])
-    user_id = query.from_user.id
-    add_or_update_user(user_id, {"interval": interval})
-    lang = get_user(user_id)['language']
-    keyboard = []
-    for tz in TIMEZONES:
-        keyboard.append([InlineKeyboardButton(tz, callback_data=f'tz_{tz}')])
-    keyboard.append([InlineKeyboardButton(get_text(lang, 'back_button'), callback_data='back_to_menu')])
-    await query.edit_message_text(get_text(lang, 'settings_saved') + "\n\n" + get_text(lang, 'choose_timezone'), reply_markup=InlineKeyboardMarkup(keyboard))
-    return TIMEZONE
-
-async def timezone_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    timezone = query.data.split('_')[1]
-    user_id = query.from_user.id
-    add_or_update_user(user_id, {"timezone": timezone})
-    lang = get_user(user_id)['language']
-    plan = get_plan(user_id)
-    await query.edit_message_text(get_text(lang, 'settings_saved'), reply_markup=main_menu(lang, plan))
-    return ConversationHandler.END
-
 def get_all_funding():
     functions = [
         get_funding_bybit, get_funding_binance, get_funding_bitget, get_funding_mexc,
@@ -230,23 +155,10 @@ async def main():
     application.add_handler(CallbackQueryHandler(top_funding, pattern='^top_funding$'))
     application.add_handler(CallbackQueryHandler(account, pattern='^account$'))
     application.add_handler(CallbackQueryHandler(get_pro, pattern='^get_pro$'))
-    application.add_handler(CallbackQueryHandler(back_to_menu, pattern='^back_to_menu$'))
-
-    conv_handler = ConversationHandler(
-        entry_points=[CallbackQueryHandler(filter_main, pattern='^filter_main$')],
-        states={
-            EXCHANGE: [CallbackQueryHandler(ex_handler, pattern='^ex_')],
-            THRESHOLD: [MessageHandler(filters.TEXT & ~filters.COMMAND, threshold_handler)],
-            INTERVAL: [CallbackQueryHandler(interval_handler, pattern='^int_')],
-            TIMEZONE: [CallbackQueryHandler(timezone_handler, pattern='^tz_')],
-        },
-        fallbacks=[CallbackQueryHandler(back_to_menu, pattern='^back_to_menu$')],
-    )
-    application.add_handler(conv_handler)
 
     print("FundingBot 3.0 — ЗАПУЩЕНО!")
 
-    await application.run_polling()
+    await application.run_polling(drop_pending_updates=True)
 
 if __name__ == '__main__':
     import asyncio

@@ -1,4 +1,4 @@
-# main.py — Повна робоча версія v20.8 (асинхронна, кнопки миттєво, повне меню + фільтр + "Назад")
+# main.py — v20.8, працює на Render з Python 3.13, кнопки миттєво, без помилок
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, ContextTypes, CommandHandler, CallbackQueryHandler, ConversationHandler, MessageHandler, filters
@@ -9,6 +9,9 @@ from i18n import get_text
 from config import BOT_TOKEN, USDT_WALLET, ADMIN_ID, EARLY_BIRD_LIMIT, PRO_PRICE_USDT, PRO_DAYS
 from datetime import datetime, timedelta
 import pytz
+import nest_asyncio
+
+nest_asyncio.apply()  # Фікс для Render (event loop)
 
 logging.basicConfig(level=logging.INFO)
 
@@ -16,7 +19,6 @@ FREE_THRESHOLD = 1.5
 ALL_EXCHANGES = ['Bybit', 'Binance', 'Bitget', 'MEXC', 'OKX', 'KuCoin', 'HTX', 'Gate.io', 'BingX']
 TIMEZONES = ['UTC', 'Europe/Kiev', 'Europe/London', 'America/New_York', 'America/Chicago', 'Asia/Dubai', 'Asia/Singapore', 'Asia/Hong_Kong']
 
-# Стани для фільтра
 EXCHANGE, THRESHOLD, INTERVAL, TIMEZONE = range(4)
 
 init_db()
@@ -64,80 +66,39 @@ async def lang_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     add_or_update_user(user_id, data)
     await query.edit_message_text(get_text(lang, 'start_message'), reply_markup=main_menu(lang, "FREE"))
 
-async def filter_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def top_funding(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    user = get_user(query.from_user.id)
+    user_id = query.from_user.id
+    user = get_user(user_id)
     lang = user['language']
-    plan = get_plan(query.from_user.id)
-    keyboard = []
-    if plan == "PRO":
-        for ex in ALL_EXCHANGES:
-            keyboard.append([InlineKeyboardButton(ex, callback_data=f'ex_{ex}')])
-    else:
-        keyboard.append([InlineKeyboardButton("Bybit (FREE)", callback_data='ex_Bybit')])
-    keyboard.append([InlineKeyboardButton(get_text(lang, 'back_button'), callback_data='back_to_menu')])
-    await query.edit_message_text(get_text(lang, 'choose_exchange'), reply_markup=InlineKeyboardMarkup(keyboard))
-    return EXCHANGE
-
-async def back_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user = get_user(query.from_user.id)
-    lang = user['language']
-    plan = get_plan(query.from_user.id)
-    await query.edit_message_text(get_text(lang, 'start_message'), reply_markup=main_menu(lang, plan))
-    return ConversationHandler.END
-
-async def ex_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    exchange = query.data.split('_')[1]
-    user_id = query.from_user.id
-    add_or_update_user(user_id, {"exchange": exchange})
-    lang = get_user(user_id)['language']
-    keyboard = [[InlineKeyboardButton(get_text(lang, 'back_button'), callback_data='back_to_menu')]]
-    await query.edit_message_text(get_text(lang, 'settings_saved') + "\n\n" + get_text(lang, 'choose_threshold'), reply_markup=InlineKeyboardMarkup(keyboard))
-    return THRESHOLD
-
-async def threshold_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    threshold = float(update.message.text)
-    user_id = update.message.from_user.id
-    add_or_update_user(user_id, {"threshold": threshold})
-    lang = get_user(user_id)['language']
-    keyboard = [
-        [InlineKeyboardButton("1 хв", callback_data='int_1'), InlineKeyboardButton("2 хв", callback_data='int_2')],
-        [InlineKeyboardButton("5 хв", callback_data='int_5'), InlineKeyboardButton("10 хв", callback_data='int_10')],
-        [InlineKeyboardButton("15 хв", callback_data='int_15'), InlineKeyboardButton("30 хв", callback_data='int_30')],
-        [InlineKeyboardButton(get_text(lang, 'back_button'), callback_data='back_to_menu')]
-    ]
-    await update.message.reply_text(get_text(lang, 'settings_saved') + "\n\n" + get_text(lang, 'choose_interval'), reply_markup=InlineKeyboardMarkup(keyboard))
-    return INTERVAL
-
-async def interval_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    interval = int(query.data.split('_')[1])
-    user_id = query.from_user.id
-    add_or_update_user(user_id, {"interval": interval})
-    lang = get_user(user_id)['language']
-    keyboard = []
-    for tz in TIMEZONES:
-        keyboard.append([InlineKeyboardButton(tz, callback_data=f'tz_{tz}')])
-    keyboard.append([InlineKeyboardButton(get_text(lang, 'back_button'), callback_data='back_to_menu')])
-    await query.edit_message_text(get_text(lang, 'settings_saved') + "\n\n" + get_text(lang, 'choose_timezone'), reply_markup=InlineKeyboardMarkup(keyboard))
-    return TIMEZONE
-
-async def timezone_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    timezone = query.data.split('_')[1]
-    user_id = query.from_user.id
-    add_or_update_user(user_id, {"timezone": timezone})
-    lang = get_user(user_id)['language']
     plan = get_plan(user_id)
-    await query.edit_message_text(get_text(lang, 'settings_saved'), reply_markup=main_menu(lang, plan))
-    return ConversationHandler.END
+    funding_list = get_all_funding()
+    message = format_funding_message(funding_list, plan, lang)
+    await query.edit_message_text(get_text(lang, 'auto_message') + "\n" + message, reply_markup=main_menu(lang, plan))
+
+async def account(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    user = get_user(user_id)
+    lang = user['language']
+    plan = get_plan(user_id)
+    expires = user['plan_expires']
+    expires_str = expires.strftime("%d.%m.%Y") if expires else "FREE"
+    text = f"Тариф: {plan}\nІнтервал: {user['interval']} хв\nПоріг: {user['threshold']}%\nБіржа: {user['exchange']}\nPRO до: {expires_str}"
+    await query.edit_message_text(text, reply_markup=main_menu(lang, plan))
+
+async def get_pro(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    if get_plan(user_id) == "PRO":
+        await query.edit_message_text("У вас вже є PRO!")
+        return
+    invoice_link = f"https://t.me/CryptoBot?start=pay_{PRO_PRICE_USDT}usdt_{user_id}_pro"
+    keyboard = [[InlineKeyboardButton(f"Оплатити {PRO_PRICE_USDT} USDT", url=invoice_link)]]
+    await query.edit_message_text("PRO-тариф — 50 USDT/міс\nОплата через @CryptoBot", reply_markup=InlineKeyboardMarkup(keyboard))
 
 def get_all_funding():
     functions = [
@@ -193,19 +154,8 @@ async def main():
     application.add_handler(CallbackQueryHandler(top_funding, pattern='^top_funding$'))
     application.add_handler(CallbackQueryHandler(account, pattern='^account$'))
     application.add_handler(CallbackQueryHandler(get_pro, pattern='^get_pro$'))
-    application.add_handler(CallbackQueryHandler(back_to_menu, pattern='^back_to_menu$'))
 
-    conv_handler = ConversationHandler(
-        entry_points=[CallbackQueryHandler(filter_main, pattern='^filter_main$')],
-        states={
-            EXCHANGE: [CallbackQueryHandler(ex_handler, pattern='^ex_')],
-            THRESHOLD: [MessageHandler(filters.TEXT & ~filters.COMMAND, threshold_handler)],
-            INTERVAL: [CallbackQueryHandler(interval_handler, pattern='^int_')],
-            TIMEZONE: [CallbackQueryHandler(timezone_handler, pattern='^tz_')],
-        },
-        fallbacks=[CallbackQueryHandler(back_to_menu, pattern='^back_to_menu$')],
-    )
-    application.add_handler(conv_handler)
+    print("FundingBot 3.0 — ЗАПУЩЕНО!")
 
     await application.run_polling()
 

@@ -1,6 +1,6 @@
-# main.py — v20.8 webhook (робочий на Render, без polling помилок)
+# main.py — webhook версія для Render (v20.8, стабільна, без polling помилок)
 from flask import Flask, request, abort
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, ContextTypes, CommandHandler, CallbackQueryHandler
 from database import init_db, get_user, add_or_update_user, get_plan, increment_early_bird, get_early_bird_count
 from funding_sources import *
@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 
 app = Flask(__name__)
 
+# Створюємо додаток
 application = Application.builder().token(BOT_TOKEN).build()
 
 init_db()
@@ -51,24 +52,115 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.job_queue.run_repeating(send_periodic_funding, interval=user['interval'] * 60, first=10, data=user_id, name=str(user_id))
 
-# (додай інші хендлери: lang_handler, top_funding, account, get_pro, filter_main, back_to_menu тощо — з попереднього коду)
+async def lang_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    lang = query.data.split('_')[1]
+    user_id = query.from_user.id
+    data = {"language": lang, "plan": "FREE", "interval": 5, "threshold": 1.5, "exchange": "Bybit", "timezone": "UTC"}
+    add_or_update_user(user_id, data)
+    await query.edit_message_text(get_text(lang, 'start_message'), reply_markup=main_menu(lang, "FREE"))
 
+async def top_funding(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    user = get_user(user_id)
+    lang = user['language']
+    plan = get_plan(user_id)
+    funding_list = get_all_funding()
+    message = format_funding_message(funding_list, plan, lang)
+    await query.edit_message_text(get_text(lang, 'auto_message') + "\n" + message, reply_markup=main_menu(lang, plan))
+
+async def account(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    user = get_user(user_id)
+    lang = user['language']
+    plan = get_plan(user_id)
+    expires = user['plan_expires']
+    expires_str = expires.strftime("%d.%m.%Y") if expires else "FREE"
+    text = f"Тариф: {plan}\nІнтервал: {user['interval']} хв\nПоріг: {user['threshold']}%\nБіржа: {user['exchange']}\nPRO до: {expires_str}"
+    await query.edit_message_text(text, reply_markup=main_menu(lang, plan))
+
+async def get_pro(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    if get_plan(user_id) == "PRO":
+        await query.edit_message_text("У вас вже є PRO!")
+        return
+    invoice_link = f"https://t.me/CryptoBot?start=pay_50usdt_{user_id}_pro"
+    keyboard = [[InlineKeyboardButton("Оплатити 50 USDT", url=invoice_link)]]
+    await query.edit_message_text("PRO-тариф — 50 USDT/міс\nОплата через @CryptoBot", reply_markup=InlineKeyboardMarkup(keyboard))
+
+def get_all_funding():
+    functions = [
+        get_funding_bybit, get_funding_binance, get_funding_bitget, get_funding_mexc,
+        get_funding_okx, get_funding_kucoin, get_funding_htx, get_funding_gateio, get_funding_bingx
+    ]
+    result = []
+    for func in functions:
+        try:
+            result.extend(func())
+        except Exception as e:
+            print(f"{func.__name__} error:", e)
+    return result
+
+def format_funding_message(funding_list, plan, lang):
+    funding_list.sort(key=lambda x: x["funding_rate"], reverse=True)
+    lines = []
+    for f in funding_list[:10]:
+        rate = f["funding_rate"]
+        time_str = f["next_funding_time"].strftime("%H:%M")
+        symbol = f["symbol"]
+        exchange = f["exchange"]
+        if plan == "FREE" and rate > FREE_THRESHOLD:
+            line = f"{rate:.2f}% о {time_str} на {exchange}"
+        else:
+            line = f"{rate:.2f}% о {time_str} → {symbol} ({exchange})"
+        lines.append(line)
+    return "\n".join(lines) if lines else get_text(lang, 'no_funding')
+
+async def send_periodic_funding(context: ContextTypes.DEFAULT_TYPE):
+    user_id = context.job.data
+    user = get_user(user_id)
+    if not user:
+        return
+    lang = user['language']
+    plan = get_plan(user_id)
+    try:
+        funding_list = get_all_funding()
+        filtered = [f for f in funding_list if f["funding_rate"] >= user['threshold']]
+        if user['exchange'] != "ALL":
+            filtered = [f for f in filtered if f["exchange"] == user['exchange']]
+        message = format_funding_message(filtered, plan, lang)
+        if message.strip():
+            await context.bot.send_message(chat_id=user_id, text=get_text(lang, 'auto_message') + "\n" + message)
+    except Exception as e:
+        print("Periodic error:", e)
+
+# Додаємо хендлери
 application.add_handler(CommandHandler("start", start))
-# інші хендлери
+application.add_handler(CallbackQueryHandler(lang_handler, pattern='^lang_'))
+application.add_handler(CallbackQueryHandler(top_funding, pattern='^top_funding$'))
+application.add_handler(CallbackQueryHandler(account, pattern='^account$'))
+application.add_handler(CallbackQueryHandler(get_pro, pattern='^get_pro$'))
 
-@app.route('/' + BOT_TOKEN, methods=['POST'])
-async def webhook():
+# Webhook роут
+@app.route('/webhook', methods=['POST'])
+async def webhook_handler():
     if request.headers.get('content-type') == 'application/json':
         json_string = request.get_data().decode('utf-8')
         update = Update.de_json(json_string, application.bot)
         await application.process_update(update)
-        return ''
-    else:
-        abort(403)
+        return 'ok', 200
+    abort(403)
 
 @app.route('/')
 def index():
-    return "Bot is running!"
+    return "Bot is alive!"
 
 if __name__ == '__main__':
-    app.run()
+    app.run(host='0.0.0.0', port=8000)

@@ -1,4 +1,4 @@
-# main.py — webhook версія для Render (v20.8, стабільна, без polling помилок)
+# main.py — webhook версія для Render (v20.8, без polling, без Updater помилок)
 from flask import Flask, request, abort
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, ContextTypes, CommandHandler, CallbackQueryHandler
@@ -8,12 +8,9 @@ from funding_sources_extra import *
 from i18n import get_text
 from config import BOT_TOKEN
 from datetime import datetime, timedelta
-import os
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-print("TOKEN FROM ENV:", BOT_TOKEN)  # для перевірки в логах
+
 app = Flask(__name__)
 
-# Створюємо додаток
 application = Application.builder().token(BOT_TOKEN).build()
 
 init_db()
@@ -53,15 +50,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(get_text(lang, 'start_message'), reply_markup=main_menu(lang, plan))
 
     context.job_queue.run_repeating(send_periodic_funding, interval=user['interval'] * 60, first=10, data=user_id, name=str(user_id))
-
-async def lang_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    lang = query.data.split('_')[1]
-    user_id = query.from_user.id
-    data = {"language": lang, "plan": "FREE", "interval": 5, "threshold": 1.5, "exchange": "Bybit", "timezone": "UTC"}
-    add_or_update_user(user_id, data)
-    await query.edit_message_text(get_text(lang, 'start_message'), reply_markup=main_menu(lang, "FREE"))
 
 async def top_funding(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -143,20 +131,19 @@ async def send_periodic_funding(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print("Periodic error:", e)
 
-# Додаємо хендлери
+# Хендлери
 application.add_handler(CommandHandler("start", start))
-application.add_handler(CallbackQueryHandler(lang_handler, pattern='^lang_'))
 application.add_handler(CallbackQueryHandler(top_funding, pattern='^top_funding$'))
 application.add_handler(CallbackQueryHandler(account, pattern='^account$'))
 application.add_handler(CallbackQueryHandler(get_pro, pattern='^get_pro$'))
 
 # Webhook роут
 @app.route('/webhook', methods=['POST'])
-async def webhook_handler():
+def webhook():
     if request.headers.get('content-type') == 'application/json':
         json_string = request.get_data().decode('utf-8')
         update = Update.de_json(json_string, application.bot)
-        await application.process_update(update)
+        application.create_task(application.process_update(update))
         return 'ok', 200
     abort(403)
 
@@ -166,4 +153,3 @@ def index():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8000)
-

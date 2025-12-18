@@ -8,7 +8,9 @@ from funding_sources_extra import *
 from i18n import get_text
 from config import BOT_TOKEN
 from datetime import datetime, timedelta
-
+import os
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+print("TOKEN FROM ENV:", BOT_TOKEN)  # для перевірки в логах
 app = Flask(__name__)
 
 # Створюємо додаток
@@ -164,3 +166,4 @@ def index():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8000)
+

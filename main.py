@@ -1,23 +1,24 @@
-# main.py — webhook для Render (v20.8, без polling, без Updater помилок)
-from flask import Flask, request, abort
+# main.py — асинхронний Telegram бот на FastAPI
+import asyncio
+from fastapi import FastAPI, Request, HTTPException
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, ContextTypes, CommandHandler, CallbackQueryHandler
+from telegram.ext import (
+    Application, CommandHandler, CallbackQueryHandler, ContextTypes
+)
 from database import init_db, get_user, add_or_update_user, get_plan, increment_early_bird, get_early_bird_count
 from funding_sources import *
 from funding_sources_extra import *
 from i18n import get_text
 from config import BOT_TOKEN
 from datetime import datetime, timedelta
-import json
 
-app = Flask(__name__)
-
+# --- Ініціалізація ---
+app = FastAPI()
 application = Application.builder().token(BOT_TOKEN).build()
-
 init_db()
-
 FREE_THRESHOLD = 1.5
 
+# --- Меню ---
 def main_menu(lang, plan):
     keyboard = [
         [InlineKeyboardButton(get_text(lang, 'filter_button'), callback_data='filter_main')],
@@ -28,6 +29,7 @@ def main_menu(lang, plan):
         keyboard.append([InlineKeyboardButton(get_text(lang, 'get_pro_button'), callback_data='get_pro')])
     return InlineKeyboardMarkup(keyboard)
 
+# --- Обробники ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user = get_user(user_id)
@@ -38,6 +40,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         await update.message.reply_text("Вітаю! Оберіть мову:", reply_markup=InlineKeyboardMarkup(keyboard))
         return
+
     lang = user['language']
     plan = get_plan(user_id)
 
@@ -46,7 +49,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         add_or_update_user(user_id, {"plan": "PRO", "plan_expires": expires})
         increment_early_bird()
         count = get_early_bird_count()
-        await update.message.reply_text(get_text(lang, 'early_bird').format(num=count), reply_markup=main_menu(lang, "PRO"))
+        await update.message.reply_text(get_text(lang, 'early_bird').format(num=count),
+                                        reply_markup=main_menu(lang, "PRO"))
     else:
         await update.message.reply_text(get_text(lang, 'start_message'), reply_markup=main_menu(lang, plan))
 
@@ -59,7 +63,8 @@ async def top_funding(update: Update, context: ContextTypes.DEFAULT_TYPE):
     plan = get_plan(user_id)
     funding_list = get_all_funding()
     message = format_funding_message(funding_list, plan, lang)
-    await query.edit_message_text(get_text(lang, 'auto_message') + "\n" + message, reply_markup=main_menu(lang, plan))
+    await query.edit_message_text(get_text(lang, 'auto_message') + "\n" + message,
+                                  reply_markup=main_menu(lang, plan))
 
 async def account(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -82,8 +87,10 @@ async def get_pro(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     invoice_link = f"https://t.me/CryptoBot?start=pay_50usdt_{user_id}_pro"
     keyboard = [[InlineKeyboardButton("Оплатити 50 USDT", url=invoice_link)]]
-    await query.edit_message_text("PRO-тариф — 50 USDT/міс\nОплата через @CryptoBot", reply_markup=InlineKeyboardMarkup(keyboard))
+    await query.edit_message_text("PRO-тариф — 50 USDT/міс\nОплата через @CryptoBot",
+                                  reply_markup=InlineKeyboardMarkup(keyboard))
 
+# --- Функції фінансів ---
 def get_all_funding():
     functions = [
         get_funding_bybit, get_funding_binance, get_funding_bitget, get_funding_mexc,
@@ -112,29 +119,29 @@ def format_funding_message(funding_list, plan, lang):
         lines.append(line)
     return "\n".join(lines) if lines else get_text(lang, 'no_funding')
 
-# Хендлери
+# --- Додавання хендлерів ---
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CallbackQueryHandler(top_funding, pattern='^top_funding$'))
 application.add_handler(CallbackQueryHandler(account, pattern='^account$'))
 application.add_handler(CallbackQueryHandler(get_pro, pattern='^get_pro$'))
 
-# Webhook роут
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    if request.headers.get('content-type') == 'application/json':
-        json_string = request.get_data().decode('utf-8')
-        data = json.loads(json_string)  # <-- виправлено
-        update = Update.de_json(data, application.bot)
-        application.create_task(application.process_update(update))
-        return 'ok', 200
-    abort(403)
+# --- Webhook ---
+@app.post("/webhook")
+async def webhook(req: Request):
+    try:
+        data = await req.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
 
-@app.route('/')
-def index():
-    return "Bot is alive!"
+    update = Update.de_json(data, application.bot)
+    asyncio.create_task(application.process_update(update))
+    return {"ok": True}
 
-if __name__ == '__main__':
-    # Використовуємо порт Render через $PORT
-    import os
-    port = int(os.environ.get('PORT', 8000))
-    app.run(host='0.0.0.0', port=port)
+@app.get("/")
+async def index():
+    return {"status": "Bot is alive!"}
+
+# --- Старт бота ---
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

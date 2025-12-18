@@ -145,7 +145,7 @@ async def send_periodic_funding(context: ContextTypes.DEFAULT_TYPE):
         print("Periodic error:", e)
 
 def main():
-    application = ApplicationBuilder().token(BOT_TOKEN).build()
+    application = Application.builder().token(BOT_TOKEN).build()
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(lang_handler, pattern='^lang_'))
@@ -159,5 +159,6 @@ if __name__ == '__main__':
     import asyncio
 
     asyncio.run(main())
+
 
 

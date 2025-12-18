@@ -1,25 +1,20 @@
-# main.py — v20.8 з патчем для Render/Python 3.13 (кнопки миттєво, без помилок)
+# main.py — v20.8 (робоча на Render, без рефералів, кнопки миттєво)
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, ContextTypes, CommandHandler, CallbackQueryHandler, ConversationHandler, MessageHandler, filters
+from telegram.ext import Application, ContextTypes, CommandHandler, CallbackQueryHandler
 from database import init_db, get_user, add_or_update_user, get_plan, increment_early_bird, get_early_bird_count
 from funding_sources import *
 from funding_sources_extra import *
 from i18n import get_text
 from config import BOT_TOKEN, USDT_WALLET, ADMIN_ID, EARLY_BIRD_LIMIT, PRO_PRICE_USDT, PRO_DAYS
 from datetime import datetime, timedelta
-import pytz
 import nest_asyncio
 
-nest_asyncio.apply()  # Фікс для event loop на Render
+nest_asyncio.apply()  # Фікс для Render
 
 logging.basicConfig(level=logging.INFO)
 
 FREE_THRESHOLD = 1.5
-ALL_EXCHANGES = ['Bybit', 'Binance', 'Bitget', 'MEXC', 'OKX', 'KuCoin', 'HTX', 'Gate.io', 'BingX']
-TIMEZONES = ['UTC', 'Europe/Kiev', 'Europe/London', 'America/New_York', 'America/Chicago', 'Asia/Dubai', 'Asia/Singapore', 'Asia/Hong_Kong']
-
-EXCHANGE, THRESHOLD, INTERVAL, TIMEZONE = range(4)
 
 init_db()
 
@@ -109,7 +104,6 @@ def get_all_funding():
     for func in functions:
         try:
             result.extend(func())
-            print(f"Received from {func.__name__.replace('get_funding_', '')}")
         except Exception as e:
             print(f"{func.__name__} error:", e)
     return result
@@ -158,7 +152,7 @@ async def main():
 
     print("FundingBot 3.0 — ЗАПУЩЕНО!")
 
-    await application.run_polling(drop_pending_updates=True)
+    await application.run_polling()
 
 if __name__ == '__main__':
     import asyncio

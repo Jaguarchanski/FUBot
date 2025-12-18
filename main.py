@@ -1,3 +1,4 @@
+# main.py — webhook для Render
 import os
 from flask import Flask, request, abort
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -6,18 +7,17 @@ from database import init_db, get_user, add_or_update_user, get_plan, increment_
 from funding_sources import *
 from funding_sources_extra import *
 from i18n import get_text
+from config import BOT_TOKEN
 from datetime import datetime, timedelta
-import logging
-
-logging.basicConfig(level=logging.INFO)
 
 app = Flask(__name__)
 
-# Токен береться з Environment Secret Render
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
+# Telegram bot
 application = Application.builder().token(BOT_TOKEN).build()
 
+# Ініціалізація бази
 init_db()
+
 FREE_THRESHOLD = 1.5
 
 # --- Меню ---
@@ -31,7 +31,7 @@ def main_menu(lang, plan):
         keyboard.append([InlineKeyboardButton(get_text(lang, 'get_pro_button'), callback_data='get_pro')])
     return InlineKeyboardMarkup(keyboard)
 
-# --- Старт бота ---
+# --- Команди ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user = get_user(user_id)
@@ -44,6 +44,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     lang = user['language']
     plan = get_plan(user_id)
+
     if plan == "FREE" and get_early_bird_count() < 500:
         expires = datetime.now() + timedelta(days=30)
         add_or_update_user(user_id, {"plan": "PRO", "plan_expires": expires})
@@ -53,7 +54,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(get_text(lang, 'start_message'), reply_markup=main_menu(lang, plan))
 
-# --- Funding ---
 async def top_funding(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -65,7 +65,6 @@ async def top_funding(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = format_funding_message(funding_list, plan, lang)
     await query.edit_message_text(get_text(lang, 'auto_message') + "\n" + message, reply_markup=main_menu(lang, plan))
 
-# --- Account ---
 async def account(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -78,7 +77,6 @@ async def account(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = f"Тариф: {plan}\nІнтервал: {user['interval']} хв\nПоріг: {user['threshold']}%\nБіржа: {user['exchange']}\nPRO до: {expires_str}"
     await query.edit_message_text(text, reply_markup=main_menu(lang, plan))
 
-# --- PRO ---
 async def get_pro(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -90,7 +88,7 @@ async def get_pro(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [[InlineKeyboardButton("Оплатити 50 USDT", url=invoice_link)]]
     await query.edit_message_text("PRO-тариф — 50 USDT/міс\nОплата через @CryptoBot", reply_markup=InlineKeyboardMarkup(keyboard))
 
-# --- Збір Funding ---
+# --- Фандінг ---
 def get_all_funding():
     functions = [
         get_funding_bybit, get_funding_binance, get_funding_bitget, get_funding_mexc,
@@ -125,7 +123,7 @@ application.add_handler(CallbackQueryHandler(top_funding, pattern='^top_funding$
 application.add_handler(CallbackQueryHandler(account, pattern='^account$'))
 application.add_handler(CallbackQueryHandler(get_pro, pattern='^get_pro$'))
 
-# --- Webhook для Render ---
+# --- Webhook ---
 @app.route('/webhook', methods=['POST'])
 def webhook():
     if request.headers.get('content-type') == 'application/json':
@@ -139,6 +137,7 @@ def webhook():
 def index():
     return "Bot is alive!"
 
+# --- Запуск ---
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8000))
     app.run(host='0.0.0.0', port=port)

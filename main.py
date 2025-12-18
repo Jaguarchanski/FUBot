@@ -11,6 +11,7 @@ from config import BOT_TOKEN, USDT_WALLET, ADMIN_ID, EARLY_BIRD_LIMIT, PRO_PRICE
 from datetime import datetime, timedelta
 import pytz
 import threading
+from telegram.ext import ContextTypes
 
 logging.basicConfig(level=logging.INFO)
 
@@ -158,4 +159,5 @@ if __name__ == '__main__':
     import asyncio
 
     asyncio.run(main())
+
 

@@ -1,5 +1,4 @@
-# main.py — webhook для Render
-import os
+# main.py — webhook для Render (v20.8, без polling, без Updater помилок)
 from flask import Flask, request, abort
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, ContextTypes, CommandHandler, CallbackQueryHandler
@@ -9,18 +8,16 @@ from funding_sources_extra import *
 from i18n import get_text
 from config import BOT_TOKEN
 from datetime import datetime, timedelta
+import json
 
 app = Flask(__name__)
 
-# Telegram bot
 application = Application.builder().token(BOT_TOKEN).build()
 
-# Ініціалізація бази
 init_db()
 
 FREE_THRESHOLD = 1.5
 
-# --- Меню ---
 def main_menu(lang, plan):
     keyboard = [
         [InlineKeyboardButton(get_text(lang, 'filter_button'), callback_data='filter_main')],
@@ -31,7 +28,6 @@ def main_menu(lang, plan):
         keyboard.append([InlineKeyboardButton(get_text(lang, 'get_pro_button'), callback_data='get_pro')])
     return InlineKeyboardMarkup(keyboard)
 
-# --- Команди ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user = get_user(user_id)
@@ -88,7 +84,6 @@ async def get_pro(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [[InlineKeyboardButton("Оплатити 50 USDT", url=invoice_link)]]
     await query.edit_message_text("PRO-тариф — 50 USDT/міс\nОплата через @CryptoBot", reply_markup=InlineKeyboardMarkup(keyboard))
 
-# --- Фандінг ---
 def get_all_funding():
     functions = [
         get_funding_bybit, get_funding_binance, get_funding_bitget, get_funding_mexc,
@@ -117,18 +112,19 @@ def format_funding_message(funding_list, plan, lang):
         lines.append(line)
     return "\n".join(lines) if lines else get_text(lang, 'no_funding')
 
-# --- Хендлери ---
+# Хендлери
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CallbackQueryHandler(top_funding, pattern='^top_funding$'))
 application.add_handler(CallbackQueryHandler(account, pattern='^account$'))
 application.add_handler(CallbackQueryHandler(get_pro, pattern='^get_pro$'))
 
-# --- Webhook ---
+# Webhook роут
 @app.route('/webhook', methods=['POST'])
 def webhook():
     if request.headers.get('content-type') == 'application/json':
         json_string = request.get_data().decode('utf-8')
-        update = Update.de_json(json_string, application.bot)
+        data = json.loads(json_string)  # <-- виправлено
+        update = Update.de_json(data, application.bot)
         application.create_task(application.process_update(update))
         return 'ok', 200
     abort(403)
@@ -137,7 +133,8 @@ def webhook():
 def index():
     return "Bot is alive!"
 
-# --- Запуск ---
 if __name__ == '__main__':
+    # Використовуємо порт Render через $PORT
+    import os
     port = int(os.environ.get('PORT', 8000))
     app.run(host='0.0.0.0', port=port)

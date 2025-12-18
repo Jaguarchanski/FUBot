@@ -1,5 +1,5 @@
-# main.py — Render + Flask + python-telegram-bot >=21 (WEBHOOK ONLY)
-
+# main.py — Flask webhook + python-telegram-bot v21+
+import asyncio
 from flask import Flask, request, abort
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -8,10 +8,7 @@ from telegram.ext import (
     CommandHandler,
     CallbackQueryHandler,
 )
-from datetime import datetime, timedelta
-import asyncio
 
-from config import BOT_TOKEN
 from database import (
     init_db,
     get_user,
@@ -20,105 +17,110 @@ from database import (
     increment_early_bird,
     get_early_bird_count,
 )
+
 from funding_sources import *
 from funding_sources_extra import *
 from i18n import get_text
+from config import BOT_TOKEN
 
-# --------------------
+from datetime import datetime, timedelta
+
+# ======================
 # Flask
-# --------------------
+# ======================
 app = Flask(__name__)
 
-# --------------------
-# Telegram Application (NO Updater, NO polling)
-# --------------------
+# ======================
+# Telegram Application
+# ======================
 application = Application.builder().token(BOT_TOKEN).build()
 
-# --------------------
-# DB
-# --------------------
+# ======================
+# Init DB
+# ======================
 init_db()
 
 FREE_THRESHOLD = 1.5
 
-# --------------------
+# ======================
 # UI
-# --------------------
+# ======================
 def main_menu(lang, plan):
     keyboard = [
-        [InlineKeyboardButton(get_text(lang, "filter_button"), callback_data="filter_main")],
-        [InlineKeyboardButton(get_text(lang, "top_funding_button"), callback_data="top_funding")],
-        [InlineKeyboardButton(get_text(lang, "account_button"), callback_data="account")],
+        [InlineKeyboardButton(get_text(lang, 'filter_button'), callback_data='filter_main')],
+        [InlineKeyboardButton(get_text(lang, 'top_funding_button'), callback_data='top_funding')],
+        [InlineKeyboardButton(get_text(lang, 'account_button'), callback_data='account')],
     ]
-    if plan == "FREE":
-        keyboard.append(
-            [InlineKeyboardButton(get_text(lang, "get_pro_button"), callback_data="get_pro")]
-        )
+    if plan == 'FREE':
+        keyboard.append([
+            InlineKeyboardButton(get_text(lang, 'get_pro_button'), callback_data='get_pro')
+        ])
     return InlineKeyboardMarkup(keyboard)
 
-# --------------------
+# ======================
 # Handlers
-# --------------------
+# ======================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user = get_user(user_id)
 
     if not user:
         keyboard = [
-            [InlineKeyboardButton("Українська", callback_data="lang_uk")],
-            [InlineKeyboardButton("English", callback_data="lang_en")],
+            [InlineKeyboardButton("Українська", callback_data='lang_uk')],
+            [InlineKeyboardButton("English", callback_data='lang_en')],
         ]
         await update.message.reply_text(
-            "Вітаю! Оберіть мову:", reply_markup=InlineKeyboardMarkup(keyboard)
+            "Вітаю! Оберіть мову:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
         return
 
-    lang = user["language"]
+    lang = user['language']
     plan = get_plan(user_id)
 
     if plan == "FREE" and get_early_bird_count() < 500:
         expires = datetime.now() + timedelta(days=30)
-        add_or_update_user(user_id, {"plan": "PRO", "plan_expires": expires})
+        add_or_update_user(user_id, {
+            "plan": "PRO",
+            "plan_expires": expires
+        })
         increment_early_bird()
         count = get_early_bird_count()
-
         await update.message.reply_text(
-            get_text(lang, "early_bird").format(num=count),
-            reply_markup=main_menu(lang, "PRO"),
+            get_text(lang, 'early_bird').format(num=count),
+            reply_markup=main_menu(lang, "PRO")
         )
     else:
         await update.message.reply_text(
-            get_text(lang, "start_message"),
-            reply_markup=main_menu(lang, plan),
+            get_text(lang, 'start_message'),
+            reply_markup=main_menu(lang, plan)
         )
 
 async def top_funding(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    user_id = query.from_user.id
-    user = get_user(user_id)
-    lang = user["language"]
-    plan = get_plan(user_id)
+    user = get_user(query.from_user.id)
+    lang = user['language']
+    plan = get_plan(query.from_user.id)
 
     funding_list = get_all_funding()
     message = format_funding_message(funding_list, plan, lang)
 
     await query.edit_message_text(
-        get_text(lang, "auto_message") + "\n" + message,
-        reply_markup=main_menu(lang, plan),
+        get_text(lang, 'auto_message') + "\n" + message,
+        reply_markup=main_menu(lang, plan)
     )
 
 async def account(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    user_id = query.from_user.id
-    user = get_user(user_id)
-    lang = user["language"]
-    plan = get_plan(user_id)
+    user = get_user(query.from_user.id)
+    lang = user['language']
+    plan = get_plan(query.from_user.id)
 
-    expires = user["plan_expires"]
+    expires = user['plan_expires']
     expires_str = expires.strftime("%d.%m.%Y") if expires else "FREE"
 
     text = (
@@ -145,12 +147,12 @@ async def get_pro(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.edit_message_text(
         "PRO-тариф — 50 USDT/міс\nОплата через @CryptoBot",
-        reply_markup=InlineKeyboardMarkup(keyboard),
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-# --------------------
-# Funding utils
-# --------------------
+# ======================
+# Funding helpers
+# ======================
 def get_all_funding():
     functions = [
         get_funding_bybit,
@@ -170,6 +172,7 @@ def get_all_funding():
             result.extend(func())
         except Exception as e:
             print(f"{func.__name__} error:", e)
+
     return result
 
 def format_funding_message(funding_list, plan, lang):
@@ -189,34 +192,38 @@ def format_funding_message(funding_list, plan, lang):
 
         lines.append(line)
 
-    return "\n".join(lines) if lines else get_text(lang, "no_funding")
+    return "\n".join(lines) if lines else get_text(lang, 'no_funding')
 
-# --------------------
+# ======================
 # Register handlers
-# --------------------
+# ======================
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CallbackQueryHandler(top_funding, pattern="^top_funding$"))
 application.add_handler(CallbackQueryHandler(account, pattern="^account$"))
 application.add_handler(CallbackQueryHandler(get_pro, pattern="^get_pro$"))
 
-# --------------------
-# Webhook
-# --------------------
+# ======================
+# Flask routes
+# ======================
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    if request.headers.get("content-type") == "application/json":
-        update = Update.de_json(request.get_json(), application.bot)
-        application.create_task(application.process_update(update))
-        return "ok", 200
-    abort(403)
+    if request.headers.get("content-type") != "application/json":
+        abort(403)
+
+    update = Update.de_json(request.get_json(force=True), application.bot)
+
+    # ❗ КЛЮЧОВА ФІКСАЦІЯ
+    application.update_queue.put_nowait(update)
+
+    return "ok", 200
 
 @app.route("/")
 def index():
     return "Bot is alive!"
 
-# --------------------
+# ======================
 # Startup
-# --------------------
+# ======================
 async def startup():
     await application.initialize()
     await application.start()

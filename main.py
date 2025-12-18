@@ -1,6 +1,7 @@
-# main.py — асинхронний запуск Telegram + Flask через FastAPI/Starlette
+import os
 import asyncio
-from fastapi import FastAPI, Request, HTTPException
+from datetime import datetime, timedelta
+from flask import Flask, request, abort
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, ContextTypes, CommandHandler, CallbackQueryHandler
 from database import init_db, get_user, add_or_update_user, get_plan, increment_early_bird, get_early_bird_count
@@ -8,18 +9,19 @@ from funding_sources import *
 from funding_sources_extra import *
 from i18n import get_text
 from config import BOT_TOKEN
-from datetime import datetime, timedelta
-import uvicorn
 
-app = FastAPI()
+app = Flask(__name__)
 
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL", f"https://fubot.onrender.com/webhook")
+FREE_THRESHOLD = 1.5
+
+# Створення Application
 application = Application.builder().token(BOT_TOKEN).build()
+
+# Ініціалізація БД
 init_db()
 
-FREE_THRESHOLD = 1.5
-WEBHOOK_URL = "https://fubot.onrender.com/webhook"
-
-# ---------- Основні функції ----------
+# --- Функції ---
 def main_menu(lang, plan):
     keyboard = [
         [InlineKeyboardButton(get_text(lang, 'filter_button'), callback_data='filter_main')],
@@ -40,6 +42,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         await update.message.reply_text("Вітаю! Оберіть мову:", reply_markup=InlineKeyboardMarkup(keyboard))
         return
+
     lang = user['language']
     plan = get_plan(user_id)
 
@@ -114,27 +117,28 @@ def format_funding_message(funding_list, plan, lang):
         lines.append(line)
     return "\n".join(lines) if lines else get_text(lang, 'no_funding')
 
-# ---------- Хендлери ----------
+# --- Хендлери ---
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CallbackQueryHandler(top_funding, pattern='^top_funding$'))
 application.add_handler(CallbackQueryHandler(account, pattern='^account$'))
 application.add_handler(CallbackQueryHandler(get_pro, pattern='^get_pro$'))
 
-# ---------- Webhook через FastAPI ----------
-@app.post("/webhook")
-async def webhook(req: Request):
-    if req.headers.get('content-type') == 'application/json':
-        json_data = await req.json()
-        update = Update.de_json(json_data, application.bot)
-        await application.process_update(update)
-        return {"ok": True}
-    raise HTTPException(status_code=403)
+# --- Flask роут ---
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    if request.headers.get('content-type') == 'application/json':
+        data = request.get_json(force=True)
+        print("Webhook received:", data)  # логування
+        update = Update.de_json(data, application.bot)
+        asyncio.create_task(application.process_update(update))
+        return 'ok', 200
+    abort(403)
 
-@app.get("/")
-async def index():
-    return {"status": "Bot is alive!"}
+@app.route('/')
+def index():
+    return "Bot is alive!"
 
-# ---------- Ініціалізація webhook ----------
+# --- Webhook встановлюється при старті ---
 async def setup_webhook():
     await application.initialize()
     info = await application.bot.get_webhook_info()
@@ -143,9 +147,9 @@ async def setup_webhook():
         print(f"Webhook встановлено: {WEBHOOK_URL}")
     else:
         print("Webhook вже встановлений")
-    await application.start()
-    await application.updater.start_polling()  # без цього бот не працює правильно асинхронно
 
-if __name__ == "__main__":
-    asyncio.run(setup_webhook())
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+if __name__ == '__main__':
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(setup_webhook())
+    import uvicorn
+    uvicorn.run(app, host='0.0.0.0', port=int(os.environ.get("PORT", 8000)))

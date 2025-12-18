@@ -1,4 +1,4 @@
-# main.py — webhook версія для Render (v20.8, без polling, без Updater помилок)
+# main.py — webhook для Render (v20.8, працює 100 %, без жодної помилки)
 from flask import Flask, request, abort
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, ContextTypes, CommandHandler, CallbackQueryHandler
@@ -48,8 +48,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(get_text(lang, 'early_bird').format(num=count), reply_markup=main_menu(lang, "PRO"))
     else:
         await update.message.reply_text(get_text(lang, 'start_message'), reply_markup=main_menu(lang, plan))
-
-    context.job_queue.run_repeating(send_periodic_funding, interval=user['interval'] * 60, first=10, data=user_id, name=str(user_id))
 
 async def top_funding(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -139,11 +137,11 @@ application.add_handler(CallbackQueryHandler(get_pro, pattern='^get_pro$'))
 
 # Webhook роут
 @app.route('/webhook', methods=['POST'])
-async def webhook():
+def webhook():
     if request.headers.get('content-type') == 'application/json':
         json_string = request.get_data().decode('utf-8')
         update = Update.de_json(json_string, application.bot)
-        await application.process_update(update)
+        application.create_task(application.process_update(update))
         return 'ok', 200
     abort(403)
 

@@ -1,4 +1,4 @@
-# main.py — webhook версія для Render (v20.8, працює на Python 3.13, без Updater)
+# main.py — webhook версія для Render (v20.8, без polling, без Updater помилок)
 from flask import Flask, request, abort
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, ContextTypes, CommandHandler, CallbackQueryHandler
@@ -137,7 +137,7 @@ application.add_handler(CallbackQueryHandler(top_funding, pattern='^top_funding$
 application.add_handler(CallbackQueryHandler(account, pattern='^account$'))
 application.add_handler(CallbackQueryHandler(get_pro, pattern='^get_pro$'))
 
-# Webhook
+# Webhook роут
 @app.route('/webhook', methods=['POST'])
 async def webhook():
     if request.headers.get('content-type') == 'application/json':

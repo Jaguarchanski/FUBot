@@ -1,8 +1,6 @@
-# main.py — Версія 4.0 (v20, асинхронна, не висне, повне меню + фільтр + кнопка Назад)
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, CallbackContext
-from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, CallbackContext
+from telegram.ext import Application, ContextTypes, CommandHandler, CallbackQueryHandler, ConversationHandler
 from database import init_db, get_user, add_or_update_user, get_plan, increment_early_bird, get_early_bird_count
 from funding_sources import *
 from funding_sources_extra import *
@@ -10,8 +8,6 @@ from i18n import get_text
 from config import BOT_TOKEN, USDT_WALLET, ADMIN_ID, EARLY_BIRD_LIMIT, PRO_PRICE_USDT, PRO_DAYS
 from datetime import datetime, timedelta
 import pytz
-import threading
-from telegram.ext import ContextTypes
 
 logging.basicConfig(level=logging.INFO)
 
@@ -159,6 +155,7 @@ if __name__ == '__main__':
     import asyncio
 
     asyncio.run(main())
+
 
 
 

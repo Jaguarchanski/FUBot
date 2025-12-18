@@ -1,4 +1,4 @@
-# main.py — webhook для Render (v20.8, працює 100 %, без жодної помилки)
+# main.py — webhook для Render (v20.8, без polling, без Updater помилок)
 from flask import Flask, request, abort
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, ContextTypes, CommandHandler, CallbackQueryHandler
@@ -110,24 +110,6 @@ def format_funding_message(funding_list, plan, lang):
             line = f"{rate:.2f}% о {time_str} → {symbol} ({exchange})"
         lines.append(line)
     return "\n".join(lines) if lines else get_text(lang, 'no_funding')
-
-async def send_periodic_funding(context: ContextTypes.DEFAULT_TYPE):
-    user_id = context.job.data
-    user = get_user(user_id)
-    if not user:
-        return
-    lang = user['language']
-    plan = get_plan(user_id)
-    try:
-        funding_list = get_all_funding()
-        filtered = [f for f in funding_list if f["funding_rate"] >= user['threshold']]
-        if user['exchange'] != "ALL":
-            filtered = [f for f in filtered if f["exchange"] == user['exchange']]
-        message = format_funding_message(filtered, plan, lang)
-        if message.strip():
-            await context.bot.send_message(chat_id=user_id, text=get_text(lang, 'auto_message') + "\n" + message)
-    except Exception as e:
-        print("Periodic error:", e)
 
 # Хендлери
 application.add_handler(CommandHandler("start", start))

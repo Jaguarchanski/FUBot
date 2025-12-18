@@ -1,7 +1,7 @@
-# main.py — Flask webhook + python-telegram-bot v21+
+# main.py — Flask webhook + python-telegram-bot v21 (FIX event loop)
 import asyncio
+import threading
 from flask import Flask, request, abort
-
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -23,18 +23,39 @@ from funding_sources import *
 from funding_sources_extra import *
 from i18n import get_text
 from config import BOT_TOKEN
-
 from datetime import datetime, timedelta
 
-# ------------------ APP ------------------
-
+# =====================
+# Flask
+# =====================
 app = Flask(__name__)
-application: Application | None = None
+
+# =====================
+# Telegram Application
+# =====================
+application = Application.builder().token(BOT_TOKEN).build()
+
+# =====================
+# ASYNCIO LOOP (CRITICAL FIX)
+# =====================
+loop = asyncio.new_event_loop()
+
+def run_loop():
+    asyncio.set_event_loop(loop)
+    loop.run_forever()
+
+threading.Thread(target=run_loop, daemon=True).start()
+
+# =====================
+# Init DB
+# =====================
+init_db()
 
 FREE_THRESHOLD = 1.5
 
-# ------------------ UI ------------------
-
+# =====================
+# UI
+# =====================
 def main_menu(lang, plan):
     keyboard = [
         [InlineKeyboardButton(get_text(lang, 'filter_button'), callback_data='filter_main')],
@@ -47,8 +68,9 @@ def main_menu(lang, plan):
         )
     return InlineKeyboardMarkup(keyboard)
 
-# ------------------ HANDLERS ------------------
-
+# =====================
+# Handlers
+# =====================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user = get_user(user_id)
@@ -60,7 +82,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         await update.message.reply_text(
             "Вітаю! Оберіть мову:",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            reply_markup=InlineKeyboardMarkup(keyboard),
         )
         return
 
@@ -68,22 +90,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     plan = get_plan(user_id)
 
     if plan == "FREE" and get_early_bird_count() < 500:
-        expires = datetime.utcnow() + timedelta(days=30)
-        add_or_update_user(user_id, {
-            "plan": "PRO",
-            "plan_expires": expires
-        })
+        expires = datetime.now() + timedelta(days=30)
+        add_or_update_user(user_id, {"plan": "PRO", "plan_expires": expires})
         increment_early_bird()
         count = get_early_bird_count()
-
         await update.message.reply_text(
             get_text(lang, 'early_bird').format(num=count),
-            reply_markup=main_menu(lang, "PRO")
+            reply_markup=main_menu(lang, "PRO"),
         )
     else:
         await update.message.reply_text(
             get_text(lang, 'start_message'),
-            reply_markup=main_menu(lang, plan)
+            reply_markup=main_menu(lang, plan),
         )
 
 async def top_funding(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -100,7 +118,7 @@ async def top_funding(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.edit_message_text(
         get_text(lang, 'auto_message') + "\n" + message,
-        reply_markup=main_menu(lang, plan)
+        reply_markup=main_menu(lang, plan),
     )
 
 async def account(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -109,12 +127,11 @@ async def account(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user_id = query.from_user.id
     user = get_user(user_id)
-
     lang = user['language']
     plan = get_plan(user_id)
 
     expires = user['plan_expires']
-    expires_str = expires.strftime("%d.%m.%Y") if expires else "—"
+    expires_str = expires.strftime("%d.%m.%Y") if expires else "FREE"
 
     text = (
         f"Тариф: {plan}\n"
@@ -131,9 +148,8 @@ async def get_pro(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     user_id = query.from_user.id
-
     if get_plan(user_id) == "PRO":
-        await query.edit_message_text("У вас вже є PRO 🙂")
+        await query.edit_message_text("У вас вже є PRO!")
         return
 
     invoice_link = f"https://t.me/CryptoBot?start=pay_50usdt_{user_id}_pro"
@@ -141,11 +157,12 @@ async def get_pro(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.edit_message_text(
         "PRO-тариф — 50 USDT/міс\nОплата через @CryptoBot",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+        reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
-# ------------------ FUNDING ------------------
-
+# =====================
+# Funding utils
+# =====================
 def get_all_funding():
     functions = [
         get_funding_bybit,
@@ -185,40 +202,37 @@ def format_funding_message(funding_list, plan, lang):
 
     return "\n".join(lines) if lines else get_text(lang, 'no_funding')
 
-# ------------------ WEBHOOK ------------------
+# =====================
+# Register handlers
+# =====================
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CallbackQueryHandler(top_funding, pattern='^top_funding$'))
+application.add_handler(CallbackQueryHandler(account, pattern='^account$'))
+application.add_handler(CallbackQueryHandler(get_pro, pattern='^get_pro$'))
 
-@app.route("/webhook", methods=["POST"])
+# =====================
+# Webhook (FIXED)
+# =====================
+@app.route('/webhook', methods=['POST'])
 def webhook():
-    if request.headers.get("content-type") != "application/json":
+    if request.headers.get('content-type') != 'application/json':
         abort(403)
 
-    data = request.get_json(force=True)
-    update = Update.de_json(data, application.bot)
+    update = Update.de_json(request.get_json(force=True), application.bot)
 
-    application.create_task(application.process_update(update))
-    return "ok", 200
+    asyncio.run_coroutine_threadsafe(
+        application.process_update(update),
+        loop,
+    )
 
-@app.route("/")
+    return 'ok', 200
+
+@app.route('/')
 def index():
     return "Bot is alive!"
 
-# ------------------ STARTUP ------------------
-
-async def setup_bot():
-    global application
-
-    init_db()
-
-    application = Application.builder().token(BOT_TOKEN).build()
-
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CallbackQueryHandler(top_funding, pattern="^top_funding$"))
-    application.add_handler(CallbackQueryHandler(account, pattern="^account$"))
-    application.add_handler(CallbackQueryHandler(get_pro, pattern="^get_pro$"))
-
-    await application.initialize()
-    await application.start()
-
-if __name__ == "__main__":
-    asyncio.run(setup_bot())
-    app.run(host="0.0.0.0", port=8000)
+# =====================
+# Run
+# =====================
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=8000)

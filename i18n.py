@@ -17,6 +17,14 @@ TEXTS = {
         'choose_threshold': "Мінімальний поріг funding (%):",
         'choose_interval': "Інтервал сповіщень:",
         'choose_timezone': "Часовий пояс:",
+        'filter_menu': "Налаштування фільтру:",
+        'set_timezone': "⏰ Встановити часовий пояс",
+        'select_exchanges': "🏦 Вибрати біржі",
+        'set_threshold': "🔢 Встановити поріг",
+        'main_menu': "Головне меню",
+        'choose_exchanges': "Оберіть біржі, які вас цікавлять:",
+        'set_threshold_text': "Встановіть мінімальний поріг funding:",
+        'choose_timezone': "Оберіть ваш часовий пояс:"
     },
     'en': {
         'welcome': "Hello! Choose language:",
@@ -35,6 +43,14 @@ TEXTS = {
         'choose_threshold': "Minimum funding threshold (%):",
         'choose_interval': "Notification interval:",
         'choose_timezone': "Timezone:",
+        'filter_menu': "Filter settings:",
+        'set_timezone': "⏰ Set Timezone",
+        'select_exchanges': "🏦 Select Exchanges",
+        'set_threshold': "🔢 Set Threshold",
+        'main_menu': "Main Menu",
+        'choose_exchanges': "Select exchanges you are interested in:",
+        'set_threshold_text': "Set minimum funding threshold:",
+        'choose_timezone': "Select your timezone:"
     }
 }
 

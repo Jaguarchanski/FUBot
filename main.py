@@ -1,155 +1,145 @@
 import os
-import asyncio
-from datetime import datetime, timedelta
-from flask import Flask, request, abort
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, ContextTypes, CommandHandler, CallbackQueryHandler
-from database import init_db, get_user, add_or_update_user, get_plan, increment_early_bird, get_early_bird_count
-from funding_sources import *
-from funding_sources_extra import *
-from i18n import get_text
-from config import BOT_TOKEN
+import logging
+from fastapi import FastAPI, Request
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup
+)
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    CallbackQueryHandler,
+    ContextTypes
+)
 
-app = Flask(__name__)
+# ================== НАЛАШТУВАННЯ ==================
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL")  # https://fubot.onrender.com/webhook
+PORT = int(os.environ.get("PORT", 10000))
 
-WEBHOOK_URL = os.environ.get("WEBHOOK_URL", f"https://fubot.onrender.com/webhook")
-FREE_THRESHOLD = 1.5
+if not BOT_TOKEN or not WEBHOOK_URL:
+    raise RuntimeError("BOT_TOKEN або WEBHOOK_URL не встановлені")
 
-# Створення Application
-application = Application.builder().token(BOT_TOKEN).build()
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# Ініціалізація БД
-init_db()
+app = FastAPI()
 
-# --- Функції ---
-def main_menu(lang, plan):
-    keyboard = [
-        [InlineKeyboardButton(get_text(lang, 'filter_button'), callback_data='filter_main')],
-        [InlineKeyboardButton(get_text(lang, 'top_funding_button'), callback_data='top_funding')],
-        [InlineKeyboardButton(get_text(lang, 'account_button'), callback_data='account')],
-    ]
-    if plan == 'FREE':
-        keyboard.append([InlineKeyboardButton(get_text(lang, 'get_pro_button'), callback_data='get_pro')])
-    return InlineKeyboardMarkup(keyboard)
+# Зберігання станів користувачів
+USER_LANG = {}
 
+# ================== КНОПКИ ==================
+def language_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🇺🇦 Українська", callback_data="lang_ua")],
+        [InlineKeyboardButton("🇬🇧 English", callback_data="lang_en")]
+    ])
+
+def main_menu(lang: str):
+    if lang == "ua":
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton("📊 Функціонал", callback_data="menu_features")],
+            [InlineKeyboardButton("ℹ️ Про бота", callback_data="menu_about")],
+            [InlineKeyboardButton("⚙️ Налаштування", callback_data="menu_settings")]
+        ])
+    else:
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton("📊 Features", callback_data="menu_features")],
+            [InlineKeyboardButton("ℹ️ About", callback_data="menu_about")],
+            [InlineKeyboardButton("⚙️ Settings", callback_data="menu_settings")]
+        ])
+
+def back_button(lang):
+    text = "⬅️ Назад" if lang == "ua" else "⬅️ Back"
+    return InlineKeyboardMarkup([[InlineKeyboardButton(text, callback_data="menu_back")]])
+
+# ================== HANDLERS ==================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    user = get_user(user_id)
-    if not user:
-        keyboard = [
-            [InlineKeyboardButton("Українська", callback_data='lang_uk')],
-            [InlineKeyboardButton("English", callback_data='lang_en')],
-        ]
-        await update.message.reply_text("Вітаю! Оберіть мову:", reply_markup=InlineKeyboardMarkup(keyboard))
-        return
+    await update.message.reply_text(
+        "Оберіть мову / Choose your language:",
+        reply_markup=language_keyboard()
+    )
 
-    lang = user['language']
-    plan = get_plan(user_id)
-
-    if plan == "FREE" and get_early_bird_count() < 500:
-        expires = datetime.now() + timedelta(days=30)
-        add_or_update_user(user_id, {"plan": "PRO", "plan_expires": expires})
-        increment_early_bird()
-        count = get_early_bird_count()
-        await update.message.reply_text(get_text(lang, 'early_bird').format(num=count), reply_markup=main_menu(lang, "PRO"))
-    else:
-        await update.message.reply_text(get_text(lang, 'start_message'), reply_markup=main_menu(lang, plan))
-
-async def top_funding(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def language_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    user_id = query.from_user.id
-    user = get_user(user_id)
-    lang = user['language']
-    plan = get_plan(user_id)
-    funding_list = get_all_funding()
-    message = format_funding_message(funding_list, plan, lang)
-    await query.edit_message_text(get_text(lang, 'auto_message') + "\n" + message, reply_markup=main_menu(lang, plan))
 
-async def account(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lang = query.data.split("_")[1]
+    USER_LANG[query.from_user.id] = lang
+
+    text = (
+        "✅ Мову встановлено.\nОберіть пункт меню:"
+        if lang == "ua"
+        else "✅ Language set.\nChoose menu item:"
+    )
+
+    await query.edit_message_text(
+        text=text,
+        reply_markup=main_menu(lang)
+    )
+
+async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+
     user_id = query.from_user.id
-    user = get_user(user_id)
-    lang = user['language']
-    plan = get_plan(user_id)
-    expires = user['plan_expires']
-    expires_str = expires.strftime("%d.%m.%Y") if expires else "FREE"
-    text = f"Тариф: {plan}\nІнтервал: {user['interval']} хв\nПоріг: {user['threshold']}%\nБіржа: {user['exchange']}\nPRO до: {expires_str}"
-    await query.edit_message_text(text, reply_markup=main_menu(lang, plan))
+    lang = USER_LANG.get(user_id, "ua")
 
-async def get_pro(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    if get_plan(user_id) == "PRO":
-        await query.edit_message_text("У вас вже є PRO!")
-        return
-    invoice_link = f"https://t.me/CryptoBot?start=pay_50usdt_{user_id}_pro"
-    keyboard = [[InlineKeyboardButton("Оплатити 50 USDT", url=invoice_link)]]
-    await query.edit_message_text("PRO-тариф — 50 USDT/міс\nОплата через @CryptoBot", reply_markup=InlineKeyboardMarkup(keyboard))
+    if query.data == "menu_features":
+        text = (
+            "📊 Тут буде основний функціонал бота."
+            if lang == "ua"
+            else "📊 Main bot functionality will be here."
+        )
+        await query.edit_message_text(text, reply_markup=back_button(lang))
 
-def get_all_funding():
-    functions = [
-        get_funding_bybit, get_funding_binance, get_funding_bitget, get_funding_mexc,
-        get_funding_okx, get_funding_kucoin, get_funding_htx, get_funding_gateio, get_funding_bingx
-    ]
-    result = []
-    for func in functions:
-        try:
-            result.extend(func())
-        except Exception as e:
-            print(f"{func.__name__} error:", e)
-    return result
+    elif query.data == "menu_about":
+        text = (
+            "ℹ️ Цей бот створений для подальшого розширення функціоналу."
+            if lang == "ua"
+            else "ℹ️ This bot is designed for further feature expansion."
+        )
+        await query.edit_message_text(text, reply_markup=back_button(lang))
 
-def format_funding_message(funding_list, plan, lang):
-    funding_list.sort(key=lambda x: x["funding_rate"], reverse=True)
-    lines = []
-    for f in funding_list[:10]:
-        rate = f["funding_rate"]
-        time_str = f["next_funding_time"].strftime("%H:%M")
-        symbol = f["symbol"]
-        exchange = f["exchange"]
-        if plan == "FREE" and rate > FREE_THRESHOLD:
-            line = f"{rate:.2f}% о {time_str} на {exchange}"
-        else:
-            line = f"{rate:.2f}% о {time_str} → {symbol} ({exchange})"
-        lines.append(line)
-    return "\n".join(lines) if lines else get_text(lang, 'no_funding')
+    elif query.data == "menu_settings":
+        text = (
+            "⚙️ Налаштування будуть доступні згодом."
+            if lang == "ua"
+            else "⚙️ Settings will be available later."
+        )
+        await query.edit_message_text(text, reply_markup=back_button(lang))
 
-# --- Хендлери ---
+    elif query.data == "menu_back":
+        text = (
+            "Головне меню:"
+            if lang == "ua"
+            else "Main menu:"
+        )
+        await query.edit_message_text(text, reply_markup=main_menu(lang))
+
+# ================== APPLICATION ==================
+application = ApplicationBuilder().token(BOT_TOKEN).build()
+
 application.add_handler(CommandHandler("start", start))
-application.add_handler(CallbackQueryHandler(top_funding, pattern='^top_funding$'))
-application.add_handler(CallbackQueryHandler(account, pattern='^account$'))
-application.add_handler(CallbackQueryHandler(get_pro, pattern='^get_pro$'))
+application.add_handler(CallbackQueryHandler(language_handler, pattern="^lang_"))
+application.add_handler(CallbackQueryHandler(menu_handler, pattern="^menu_"))
 
-# --- Flask роут ---
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    if request.headers.get('content-type') == 'application/json':
-        data = request.get_json(force=True)
-        print("Webhook received:", data)  # логування
-        update = Update.de_json(data, application.bot)
-        asyncio.create_task(application.process_update(update))
-        return 'ok', 200
-    abort(403)
+# ================== WEBHOOK ==================
+@app.post("/webhook")
+async def telegram_webhook(req: Request):
+    data = await req.json()
+    update = Update.de_json(data, application.bot)
+    await application.update_queue.put(update)
+    return {"ok": True}
 
-@app.route('/')
-def index():
-    return "Bot is alive!"
+@app.on_event("startup")
+async def on_startup():
+    await application.bot.delete_webhook()
+    await application.bot.set_webhook(WEBHOOK_URL)
+    logger.info(f"Webhook встановлено: {WEBHOOK_URL}")
 
-# --- Webhook встановлюється при старті ---
-async def setup_webhook():
-    await application.initialize()
-    info = await application.bot.get_webhook_info()
-    if info.url != WEBHOOK_URL:
-        await application.bot.set_webhook(WEBHOOK_URL)
-        print(f"Webhook встановлено: {WEBHOOK_URL}")
-    else:
-        print("Webhook вже встановлений")
-
-if __name__ == '__main__':
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(setup_webhook())
-    import uvicorn
-    uvicorn.run(app, host='0.0.0.0', port=int(os.environ.get("PORT", 8000)))
+# ================== ROOT ==================
+@app.get("/")
+async def root():
+    return {"status": "Bot is running"}

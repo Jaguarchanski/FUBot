@@ -1,163 +1,140 @@
 # funding_sources.py
 import requests
 from datetime import datetime
+from typing import List, Dict
 
-TIMEOUT = 10
+HEADERS = {
+    "User-Agent": "Mozilla/5.0"
+}
 
-
-def _safe_json(response):
+def _safe_time(ts):
     try:
-        return response.json()
+        if not ts:
+            return None
+        return datetime.fromtimestamp(int(ts) / 1000)
     except Exception:
         return None
 
 
-# =========================
-# BYBIT
-# =========================
-def get_funding_bybit():
+# ---------------- BYBIT ----------------
+def get_funding_bybit() -> List[Dict]:
     url = "https://api.bybit.com/v5/market/tickers"
     params = {"category": "linear"}
 
     try:
-        r = requests.get(url, params=params, timeout=TIMEOUT)
+        r = requests.get(url, params=params, headers=HEADERS, timeout=10)
         r.raise_for_status()
-        data = _safe_json(r)
-
-        items = data.get("result", {}).get("list", []) if isinstance(data, dict) else []
-        result = []
-
-        for item in items:
-            symbol = item.get("symbol", "")
-            if not symbol.endswith("USDT"):
-                continue
-
-            rate = float(item.get("fundingRate", 0)) * 100
-            ts = int(item.get("nextFundingTime", 0))
-            next_time = datetime.fromtimestamp(ts / 1000) if ts else None
-
-            result.append({
-                "exchange": "Bybit",
-                "symbol": symbol,
-                "funding_rate": round(rate, 4),
-                "next_funding_time": next_time
-            })
-
-        return result
-
+        data = r.json().get("result", {}).get("list", [])
     except Exception as e:
         print("Bybit error:", e)
         return []
 
+    result = []
+    for i in data:
+        if not i.get("symbol", "").endswith("USDT"):
+            continue
 
-# =========================
-# BINANCE
-# =========================
-def get_funding_binance():
+        try:
+            result.append({
+                "exchange": "Bybit",
+                "symbol": i["symbol"],
+                "funding_rate": round(float(i.get("fundingRate", 0)) * 100, 4),
+                "next_funding_time": _safe_time(i.get("nextFundingTime"))
+            })
+        except Exception:
+            continue
+
+    return result
+
+
+# ---------------- BINANCE (без проксі) ----------------
+def get_funding_binance() -> List[Dict]:
     url = "https://fapi.binance.com/fapi/v1/premiumIndex"
 
     try:
-        r = requests.get(url, timeout=TIMEOUT)
-        r.raise_for_status()
-        data = _safe_json(r)
-
-        if not isinstance(data, list):
-            return []
-
-        result = []
-        for item in data:
-            symbol = item.get("symbol", "")
-            if not symbol.endswith("USDT"):
-                continue
-
-            rate = float(item.get("lastFundingRate", 0)) * 100
-            ts = int(item.get("nextFundingTime", 0))
-            next_time = datetime.fromtimestamp(ts / 1000) if ts else None
-
-            result.append({
-                "exchange": "Binance",
-                "symbol": symbol,
-                "funding_rate": round(rate, 4),
-                "next_funding_time": next_time
-            })
-
-        return result
-
+        r = requests.get(url, headers=HEADERS, timeout=10)
+        if r.status_code != 200:
+            return []  # ❗ не валимо бот
+        data = r.json()
     except Exception as e:
         print("Binance error:", e)
         return []
 
+    result = []
+    for i in data:
+        if not i.get("symbol", "").endswith("USDT"):
+            continue
 
-# =========================
-# BITGET
-# =========================
-def get_funding_bitget():
-    url = "https://api.bitget.com/api/v2/mix/market/current-fund-rate"
-    params = {"productType": "umcbl"}
+        try:
+            result.append({
+                "exchange": "Binance",
+                "symbol": i["symbol"],
+                "funding_rate": round(float(i["lastFundingRate"]) * 100, 4),
+                "next_funding_time": _safe_time(i.get("nextFundingTime"))
+            })
+        except Exception:
+            continue
+
+    return result
+
+
+# ---------------- BITGET (ВИПРАВЛЕНО) ----------------
+def get_funding_bitget() -> List[Dict]:
+    url = "https://api.bitget.com/api/v2/mix/market/funding-rate"
+    params = {"productType": "USDT-FUTURES"}
 
     try:
-        r = requests.get(url, params=params, timeout=TIMEOUT)
+        r = requests.get(url, params=params, headers=HEADERS, timeout=10)
         r.raise_for_status()
-        data = _safe_json(r)
-
-        items = data.get("data", []) if isinstance(data, dict) else []
-        result = []
-
-        for item in items:
-            symbol = item.get("symbol", "")
-            if not symbol.endswith("USDT"):
-                continue
-
-            rate = float(item.get("fundingRate", 0)) * 100
-            ts = int(item.get("fundingTime", 0))
-            next_time = datetime.fromtimestamp(ts / 1000) if ts else None
-
-            result.append({
-                "exchange": "Bitget",
-                "symbol": symbol,
-                "funding_rate": round(rate, 4),
-                "next_funding_time": next_time
-            })
-
-        return result
-
+        data = r.json().get("data", [])
     except Exception as e:
         print("Bitget error:", e)
         return []
 
+    result = []
+    for i in data:
+        symbol = i.get("symbol", "")
+        if not symbol.endswith("USDT"):
+            continue
 
-# =========================
-# MEXC (ВАЖЛИВО: тут LIST)
-# =========================
-def get_funding_mexc():
+        try:
+            result.append({
+                "exchange": "Bitget",
+                "symbol": symbol,
+                "funding_rate": round(float(i.get("fundingRate", 0)) * 100, 4),
+                "next_funding_time": _safe_time(i.get("nextFundingTime"))
+            })
+        except Exception:
+            continue
+
+    return result
+
+
+# ---------------- MEXC ----------------
+def get_funding_mexc() -> List[Dict]:
     url = "https://contract.mexc.com/api/v1/contract/funding_rate"
 
     try:
-        r = requests.get(url, timeout=TIMEOUT)
+        r = requests.get(url, headers=HEADERS, timeout=10)
         r.raise_for_status()
-        data = _safe_json(r)
-
-        items = data.get("data", []) if isinstance(data, dict) else []
-        result = []
-
-        for item in items:
-            symbol = item.get("symbol", "")
-            if not symbol.endswith("USDT"):
-                continue
-
-            rate = float(item.get("fundingRate", 0)) * 100
-            ts = int(item.get("fundingTime", 0))
-            next_time = datetime.fromtimestamp(ts / 1000) if ts else None
-
-            result.append({
-                "exchange": "MEXC",
-                "symbol": symbol,
-                "funding_rate": round(rate, 4),
-                "next_funding_time": next_time
-            })
-
-        return result
-
+        data = r.json().get("data", {})
     except Exception as e:
         print("MEXC error:", e)
         return []
+
+    result = []
+    for symbol, i in data.items():
+        if not symbol.endswith("USDT"):
+            continue
+
+        try:
+            result.append({
+                "exchange": "MEXC",
+                "symbol": symbol,
+                "funding_rate": round(float(i.get("fundingRate", 0)) * 100, 4),
+                "next_funding_time": _safe_time(i.get("fundingTime"))
+            })
+        except Exception:
+            continue
+
+    return result

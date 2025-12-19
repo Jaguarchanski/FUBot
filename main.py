@@ -1,5 +1,5 @@
 import os
-import asyncio
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -15,20 +15,26 @@ from telegram.ext import (
     ContextTypes,
 )
 
-# ================== ENV ==================
+# ---------------- CONFIG ----------------
+
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
 if not BOT_TOKEN or not WEBHOOK_URL:
     raise RuntimeError("BOT_TOKEN або WEBHOOK_URL не встановлені")
 
-WEBHOOK_PATH = "/webhook"
-WEBHOOK_FULL_URL = WEBHOOK_URL + WEBHOOK_PATH
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# ================== BOT ==================
+WEBHOOK_PATH = "/webhook"
+WEBHOOK_FULL_URL = f"{WEBHOOK_URL}{WEBHOOK_PATH}"
+
+# ---------------- BOT ----------------
+
 application = Application.builder().token(BOT_TOKEN).build()
 
-# ================== HANDLERS ==================
+# ---------------- HANDLERS ----------------
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [
@@ -46,16 +52,14 @@ async def language_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     if query.data == "lang_ua":
-        text = "✅ Мову встановлено: Українська\n\nВиберіть дію:"
+        text = "✅ Мову встановлено: Українська\n\nНатисніть кнопку нижче 👇"
         keyboard = [
-            [InlineKeyboardButton("ℹ️ Про бота", callback_data="about")],
-            [InlineKeyboardButton("⚙️ Налаштування", callback_data="settings")],
+            [InlineKeyboardButton("📊 Функціонал", callback_data="features")]
         ]
     else:
-        text = "✅ Language set: English\n\nChoose action:"
+        text = "✅ Language set: English\n\nPress the button below 👇"
         keyboard = [
-            [InlineKeyboardButton("ℹ️ About bot", callback_data="about")],
-            [InlineKeyboardButton("⚙️ Settings", callback_data="settings")],
+            [InlineKeyboardButton("📊 Features", callback_data="features")]
         ]
 
     await query.edit_message_text(
@@ -63,32 +67,34 @@ async def language_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
-async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.callback_query.answer()
-    await update.callback_query.edit_message_text(
-        "🤖 Це Telegram-бот.\n\nФункціонал буде розширюватись."
+async def features(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    await query.edit_message_text(
+        "🚀 Бот працює коректно.\n\n"
+        "✔ Webhook\n"
+        "✔ FastAPI\n"
+        "✔ Inline кнопки\n"
+        "✔ Готовий до масштабування (1000+ юзерів)",
     )
 
-async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.callback_query.answer()
-    await update.callback_query.edit_message_text(
-        "⚙️ Налаштування наразі недоступні."
-    )
+# ---------------- REGISTER ----------------
 
-# ================== REGISTRATION ==================
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CallbackQueryHandler(language_selected, pattern="^lang_"))
-application.add_handler(CallbackQueryHandler(about, pattern="^about$"))
-application.add_handler(CallbackQueryHandler(settings, pattern="^settings$"))
+application.add_handler(CallbackQueryHandler(features, pattern="^features$"))
 
-# ================== FASTAPI ==================
+# ---------------- FASTAPI ----------------
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await application.initialize()
     await application.bot.set_webhook(WEBHOOK_FULL_URL)
-    print(f"Webhook встановлено: {WEBHOOK_FULL_URL}")
+    await application.start()
+    logger.info(f"Webhook встановлено: {WEBHOOK_FULL_URL}")
     yield
-    await application.shutdown()
+    await application.stop()
 
 app = FastAPI(lifespan=lifespan)
 

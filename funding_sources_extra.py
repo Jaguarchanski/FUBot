@@ -1,105 +1,115 @@
 # funding_sources_extra.py
 import requests
 from datetime import datetime
-from typing import List, Dict
 
-HEADERS = {"User-Agent": "Mozilla/5.0"}
-TIMEOUT = 10
-
-
-def safe_time(ts):
+def safe_time(ms):
     try:
-        if ts is None:
-            return datetime.utcnow()
-        if ts > 10_000_000_000:
-            ts = ts // 1000
-        return datetime.fromtimestamp(int(ts))
-    except Exception:
-        return datetime.utcnow()
+        return datetime.fromtimestamp(int(ms) / 1000)
+    except:
+        return None
 
 
-# ---------- OKX ----------
-def get_funding_okx() -> List[Dict]:
-    url = "https://www.okx.com/api/v5/public/funding-rate"
-    params = {"instType": "SWAP"}
-
+def get_funding_okx():
+    url = "https://www.okx.com/api/v5/public/funding-rate-all"
     try:
-        r = requests.get(url, params=params, headers=HEADERS, timeout=TIMEOUT)
+        r = requests.get(url, timeout=10)
         r.raise_for_status()
-        data = r.json().get("data", [])
 
         result = []
-        for item in data:
-            inst = item.get("instId", "")
-            if not inst.endswith("USDT-SWAP"):
+        for i in r.json()["data"]:
+            if "USDT" not in i["instId"]:
                 continue
 
-            symbol = inst.replace("-SWAP", "")
             result.append({
                 "exchange": "OKX",
-                "symbol": symbol,
-                "funding_rate": round(float(item["fundingRate"]) * 100, 4),
-                "next_funding_time": safe_time(item.get("fundingTime"))
+                "symbol": i["instId"].replace("-SWAP", ""),
+                "funding_rate": round(float(i["fundingRate"]) * 100, 4),
+                "next_funding_time": safe_time(i["nextFundingTime"])
             })
         return result
-
     except Exception as e:
         print("OKX error:", e)
         return []
 
 
-# ---------- BITGET ----------
-def get_funding_bitget() -> List[Dict]:
-    url = "https://api.bitget.com/api/v2/mix/market/funding-rate"
-    params = {"productType": "USDT-FUTURES"}
-
+def get_funding_kucoin():
+    url = "https://api-futures.kucoin.com/api/v1/funding-rate"
     try:
-        r = requests.get(url, params=params, headers=HEADERS, timeout=TIMEOUT)
+        r = requests.get(url, timeout=10)
         r.raise_for_status()
-        data = r.json().get("data", [])
 
         result = []
-        for item in data:
-            symbol = item.get("symbol", "")
-            if not symbol.endswith("USDT"):
+        for i in r.json()["data"]:
+            if not i["symbol"].endswith("USDT"):
                 continue
 
             result.append({
-                "exchange": "Bitget",
-                "symbol": symbol,
-                "funding_rate": round(float(item["fundingRate"]) * 100, 4),
-                "next_funding_time": safe_time(item.get("nextFundingTime"))
+                "exchange": "KuCoin",
+                "symbol": i["symbol"],
+                "funding_rate": round(float(i["fundingRate"]) * 100, 4),
+                "next_funding_time": safe_time(i["time"])
             })
         return result
-
     except Exception as e:
-        print("Bitget error:", e)
+        print("KuCoin error:", e)
         return []
 
 
-# ---------- GATE.IO ----------
-def get_funding_gateio() -> List[Dict]:
-    url = "https://api.gateio.ws/api/v4/futures/usdt/contracts"
-
+def get_funding_htx():
+    url = "https://api.htx.com/linear-swap-api/v1/swap_funding_rate"
     try:
-        r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
+        r = requests.get(url, timeout=10)
         r.raise_for_status()
-        data = r.json()
 
         result = []
-        for item in data:
-            symbol = item.get("name", "")
-            if not symbol.endswith("USDT"):
-                continue
-
+        for i in r.json()["data"]:
             result.append({
-                "exchange": "Gate.io",
-                "symbol": symbol,
-                "funding_rate": round(float(item["funding_rate"]) * 100, 4),
-                "next_funding_time": safe_time(item.get("funding_next_apply"))
+                "exchange": "HTX",
+                "symbol": i["contract_code"],
+                "funding_rate": round(float(i["funding_rate"]) * 100, 4),
+                "next_funding_time": safe_time(i["funding_time"])
             })
         return result
+    except Exception as e:
+        print("HTX error:", e)
+        return []
 
+
+def get_funding_gateio():
+    url = "https://api.gateio.ws/api/v4/futures/usdt/funding_rate"
+    try:
+        r = requests.get(url, timeout=10)
+        r.raise_for_status()
+
+        result = []
+        for i in r.json():
+            result.append({
+                "exchange": "Gate.io",
+                "symbol": i["contract"],
+                "funding_rate": round(float(i["r"]) * 100, 4),
+                "next_funding_time": safe_time(i["t"] * 1000)
+            })
+        return result
     except Exception as e:
         print("Gate.io error:", e)
+        return []
+
+
+def get_funding_bingx():
+    url = "https://open-api.bingx.com/openApi/swap/v2/quote/premiumIndex"
+    try:
+        r = requests.get(url, timeout=10)
+        r.raise_for_status()
+
+        result = []
+        for i in r.json()["data"]:
+            result.append({
+                "exchange": "BingX",
+                "symbol": i["symbol"],
+                "funding_rate": round(float(i["lastFundingRate"]) * 100, 4),
+                "next_funding_time": safe_time(i["nextFundingTime"])
+            })
+        return result
+    except Exception as e:
+        print("BingX error:", e)
         return []

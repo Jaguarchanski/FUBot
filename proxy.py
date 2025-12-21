@@ -6,9 +6,12 @@ def get_proxy():
     user = os.getenv("PROXY_USER")
     password = os.getenv("PROXY_PASS")
 
-    if not host or not port:
+    if not host:
         return None
 
-    if user and password:
-        return f"http://{user}:{password}@{host}:{port}"
-    return f"http://{host}:{port}"
+    proxy_url = f"http://{user}:{password}@{host}:{port}"
+
+    return {
+        "http": proxy_url,
+        "https": proxy_url
+    }

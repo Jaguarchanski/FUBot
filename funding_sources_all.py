@@ -1,82 +1,131 @@
-# funding_sources_extra.py
-import os
-import aiohttp
-import asyncio
+import requests
+from datetime import datetime
+from proxy import get_proxy_dict
 
-# Проксі береться зі змінних середовища
-PROXY = os.getenv("PROXY_URL")  # формат: http://user:pass@ip:port
-TIMEOUT = aiohttp.ClientTimeout(total=10)
+PROXY = get_proxy_dict()
 
-async def fetch_url(url):
-    async with aiohttp.ClientSession(timeout=TIMEOUT) as session:
-        try:
-            async with session.get(url, proxy=PROXY) as response:
-                if response.status == 200:
-                    return await response.json()
-                else:
-                    return {"error": f"{response.status} {response.reason}"}
-        except Exception as e:
-            return {"error": str(e)}
-
-# Bybit
-async def get_bybit_funding():
+def get_funding_bybit():
     url = "https://api.bybit.com/v5/market/tickers?category=linear"
-    return await fetch_url(url)
+    res = requests.get(url, proxies=PROXY, timeout=10)
+    data = res.json()
+    result = []
+    for item in data.get("result", {}).get("list", []):
+        result.append({
+            "symbol": item["symbol"],
+            "funding_rate": float(item.get("funding_rate", 0)),
+            "next_funding_time": datetime.fromtimestamp(item.get("next_funding_time", 0)),
+            "exchange": "Bybit"
+        })
+    return result
 
-# Binance
-async def get_binance_funding():
+def get_funding_binance():
     url = "https://fapi.binance.com/fapi/v1/premiumIndex"
-    return await fetch_url(url)
+    res = requests.get(url, proxies=PROXY, timeout=10)
+    data = res.json()
+    result = []
+    for item in data:
+        result.append({
+            "symbol": item["symbol"],
+            "funding_rate": float(item.get("lastFundingRate", 0)) * 100,
+            "next_funding_time": datetime.fromtimestamp(item.get("nextFundingTime", 0)/1000),
+            "exchange": "Binance"
+        })
+    return result
 
-# Bitget
-async def get_bitget_funding():
+def get_funding_bitget():
     url = "https://api.bitget.com/api/v2/mix/market/funding-rate?productType=USDT-FUTURES"
-    return await fetch_url(url)
+    res = requests.get(url, proxies=PROXY, timeout=10)
+    data = res.json()
+    result = []
+    for item in data.get("data", []):
+        result.append({
+            "symbol": item["symbol"],
+            "funding_rate": float(item.get("fundingRate", 0)) * 100,
+            "next_funding_time": datetime.fromtimestamp(item.get("fundingTime", 0)/1000),
+            "exchange": "Bitget"
+        })
+    return result
 
-# OKX
-async def get_okx_funding():
+def get_funding_mexc():
+    url = "https://www.mexc.com/api/v2/market/fundingRate"
+    res = requests.get(url, proxies=PROXY, timeout=10)
+    data = res.json()
+    result = []
+    for item in data.get("data", []):
+        result.append({
+            "symbol": item["symbol"],
+            "funding_rate": float(item.get("fundingRate", 0)),
+            "next_funding_time": datetime.fromtimestamp(item.get("fundingTime", 0)),
+            "exchange": "MEXC"
+        })
+    return result
+
+def get_funding_okx():
     url = "https://www.okx.com/api/v5/public/funding-rate-all"
-    return await fetch_url(url)
+    res = requests.get(url, proxies=PROXY, timeout=10)
+    data = res.json()
+    result = []
+    for item in data.get("data", []):
+        result.append({
+            "symbol": item["instId"],
+            "funding_rate": float(item.get("fundingRate", 0)) * 100,
+            "next_funding_time": datetime.fromtimestamp(int(item.get("fundingTime", 0)/1000)),
+            "exchange": "OKX"
+        })
+    return result
 
-# KuCoin
-async def get_kucoin_funding():
+def get_funding_kucoin():
     url = "https://api-futures.kucoin.com/api/v1/funding-rate"
-    return await fetch_url(url)
+    res = requests.get(url, proxies=PROXY, timeout=10)
+    data = res.json()
+    result = []
+    for item in data.get("data", []):
+        result.append({
+            "symbol": item["symbol"],
+            "funding_rate": float(item.get("fundingRate", 0)) * 100,
+            "next_funding_time": datetime.fromtimestamp(int(item.get("fundingNextTime", 0)/1000)),
+            "exchange": "KuCoin"
+        })
+    return result
 
-# Gate.io
-async def get_gate_funding():
-    url = "https://api.gateio.ws/api/v4/futures/usdt/funding_rate"
-    return await fetch_url(url)
-
-# HTX
-async def get_htx_funding():
+def get_funding_htx():
     url = "https://api.htx.com/linear-swap-api/v1/swap_funding_rate"
-    return await fetch_url(url)
+    res = requests.get(url, proxies=PROXY, timeout=10)
+    data = res.json()
+    result = []
+    for item in data.get("data", []):
+        result.append({
+            "symbol": item["contract_code"],
+            "funding_rate": float(item.get("funding_rate", 0)) * 100,
+            "next_funding_time": datetime.fromtimestamp(item.get("funding_time", 0)),
+            "exchange": "HTX"
+        })
+    return result
 
-# Функція для одночасного отримання всіх бірж
-async def get_all_funding():
-    tasks = [
-        get_bybit_funding(),
-        get_binance_funding(),
-        get_bitget_funding(),
-        get_okx_funding(),
-        get_kucoin_funding(),
-        get_gate_funding(),
-        get_htx_funding()
-    ]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    return {
-        "Bybit": results[0],
-        "Binance": results[1],
-        "Bitget": results[2],
-        "OKX": results[3],
-        "KuCoin": results[4],
-        "Gate": results[5],
-        "HTX": results[6],
-    }
+def get_funding_gateio():
+    url = "https://api.gateio.ws/api/v4/futures/usdt/funding_rate"
+    res = requests.get(url, proxies=PROXY, timeout=10)
+    data = res.json()
+    result = []
+    for item in data:
+        result.append({
+            "symbol": item["contract"],
+            "funding_rate": float(item.get("funding_rate", 0)) * 100,
+            "next_funding_time": datetime.fromtimestamp(item.get("funding_time", 0)),
+            "exchange": "Gate.io"
+        })
+    return result
 
-# Для тесту файлу
-if __name__ == "__main__":
-    data = asyncio.run(get_all_funding())
-    for exchange, result in data.items():
-        print(f"{exchange}: {result}\n")
+def get_funding_bingx():
+    url = "https://api.bingx.com/api/v1/funding-rate/all"
+    res = requests.get(url, proxies=PROXY, timeout=10)
+    data = res.json()
+    result = []
+    for item in data.get("data", []):
+        result.append({
+            "symbol": item["symbol"],
+            "funding_rate": float(item.get("fundingRate", 0)) * 100,
+            "next_funding_time": datetime.fromtimestamp(int(item.get("fundingTime", 0)/1000)),
+            "exchange": "BingX"
+        })
+    return result

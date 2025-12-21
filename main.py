@@ -10,8 +10,7 @@ from telegram.ext import (
     ContextTypes,
 )
 from database import init_db, get_user, add_or_update_user, get_plan, increment_early_bird, get_early_bird_count
-from funding_sources import *
-from funding_sources_extra import *
+from funding_sources_all import *  # <-- новий об'єднаний файл з усіма біржами
 from i18n import get_text
 from config import BOT_TOKEN
 
@@ -133,7 +132,7 @@ async def top_funding(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = get_user(query.from_user.id)
     lang = user['language']
     plan = get_plan(query.from_user.id)
-    funding_list = get_all_funding()
+    funding_list = get_all_funding()  # <-- використання нової об'єднаної функції
     message = format_funding_message(funding_list, plan, lang)
     await safe_edit_message(query, get_text(lang, 'auto_message') + "\n" + message, reply_markup=main_menu(lang, plan))
 
@@ -154,10 +153,9 @@ async def filter_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     await safe_edit_message(query, get_text(lang, "filter_menu"), reply_markup=InlineKeyboardMarkup(keyboard))
 
-
-# -------------------------
+# =========================
 # TIMEZONE HANDLER
-# -------------------------
+# =========================
 async def set_timezone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -168,7 +166,6 @@ async def set_timezone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard.append([InlineKeyboardButton("⬅️ " + get_text(lang, "main_menu"), callback_data="main_menu")])
     await safe_edit_message(query, get_text(lang, "choose_timezone"), reply_markup=InlineKeyboardMarkup(keyboard))
 
-
 async def timezone_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -176,10 +173,9 @@ async def timezone_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     add_or_update_user(query.from_user.id, {"timezone": tz})
     await safe_edit_message(query, f"Timezone set to UTC{tz}", reply_markup=main_menu(get_user(query.from_user.id)["language"], get_plan(query.from_user.id)))
 
-
-# -------------------------
+# =========================
 # EXCHANGES HANDLER
-# -------------------------
+# =========================
 async def select_exchanges(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -190,7 +186,6 @@ async def select_exchanges(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [[InlineKeyboardButton(e, callback_data=f"exchange_{e}") for e in exchanges[i:i+3]] for i in range(0, len(exchanges), 3)]
     keyboard.append([InlineKeyboardButton("⬅️ " + get_text(lang, "main_menu"), callback_data="main_menu")])
     await safe_edit_message(query, get_text(lang, "choose_exchanges"), reply_markup=InlineKeyboardMarkup(keyboard))
-
 
 async def exchange_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -203,10 +198,9 @@ async def exchange_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     add_or_update_user(query.from_user.id, {"exchanges": exchanges})
     await safe_edit_message(query, f"Selected exchanges: {', '.join(exchanges)}", reply_markup=main_menu(user["language"], get_plan(query.from_user.id)))
 
-
-# -------------------------
+# =========================
 # THRESHOLD HANDLER
-# -------------------------
+# =========================
 async def set_threshold(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -221,46 +215,12 @@ async def set_threshold(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     await safe_edit_message(query, get_text(lang, "set_threshold_text"), reply_markup=InlineKeyboardMarkup(keyboard))
 
-
 async def threshold_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     threshold = float(query.data.split("_")[1])
     add_or_update_user(query.from_user.id, {"threshold": threshold})
     await safe_edit_message(query, f"Threshold set to {threshold}%", reply_markup=main_menu(get_user(query.from_user.id)["language"], get_plan(query.from_user.id)))
-
-
-# =========================
-# FUNDING HELPERS
-# =========================
-def get_all_funding():
-    functions = [
-        get_funding_bybit, get_funding_binance, get_funding_bitget, get_funding_mexc,
-        get_funding_okx, get_funding_kucoin, get_funding_htx, get_funding_gateio, get_funding_bingx
-    ]
-    result = []
-    for func in functions:
-        try:
-            result.extend(func())
-        except Exception as e:
-            print(f"{func.__name__} error:", e)
-    return result
-
-def format_funding_message(funding_list, plan, lang):
-    funding_list.sort(key=lambda x: x.get("funding_rate", 0), reverse=True)
-    lines = []
-    for f in funding_list[:10]:
-        rate = f.get("funding_rate", 0)
-        time_str = f.get("next_funding_time", datetime.now()).strftime("%H:%M")
-        symbol = f.get("symbol", "")
-        exchange = f.get("exchange", "")
-        if plan == "FREE" and rate > FREE_THRESHOLD:
-            line = f"{rate:.2f}% о {time_str} на {exchange}"
-        else:
-            line = f"{rate:.2f}% о {time_str} → {symbol} ({exchange})"
-        lines.append(line)
-    return "\n".join(lines) if lines else get_text(lang, 'no_funding')
-
 
 # =========================
 # REGISTER HANDLERS
@@ -279,7 +239,6 @@ bot_app.add_handler(CallbackQueryHandler(select_exchanges, pattern="^select_exch
 bot_app.add_handler(CallbackQueryHandler(exchange_handler, pattern="^exchange_"))
 bot_app.add_handler(CallbackQueryHandler(set_threshold, pattern="^set_threshold$"))
 bot_app.add_handler(CallbackQueryHandler(threshold_handler, pattern="^threshold_"))
-
 
 # =========================
 # FASTAPI

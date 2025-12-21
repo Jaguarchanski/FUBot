@@ -5,31 +5,31 @@ from datetime import datetime
 DB_FILE = "bot.db"
 
 
-def _connect():
+def get_connection():
     return sqlite3.connect(DB_FILE, check_same_thread=False)
 
 
 def init_db():
-    conn = _connect()
+    conn = get_connection()
     c = conn.cursor()
 
     c.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
-            language TEXT NOT NULL DEFAULT 'uk',
-            plan TEXT NOT NULL DEFAULT 'FREE',
+            language TEXT DEFAULT 'uk',
+            plan TEXT DEFAULT 'FREE',
             plan_expires TEXT,
-            interval INTEGER NOT NULL DEFAULT 5,
-            threshold REAL NOT NULL DEFAULT 1.5,
-            exchange TEXT NOT NULL DEFAULT 'BingX',
-            timezone TEXT NOT NULL DEFAULT 'UTC'
+            interval INTEGER DEFAULT 5,
+            threshold REAL DEFAULT 1.5,
+            exchange TEXT DEFAULT 'BingX',
+            timezone TEXT DEFAULT 'UTC'
         )
     """)
 
     c.execute("""
         CREATE TABLE IF NOT EXISTS stats (
             key TEXT PRIMARY KEY,
-            value INTEGER NOT NULL
+            value INTEGER DEFAULT 0
         )
     """)
 
@@ -42,27 +42,16 @@ def init_db():
     conn.close()
 
 
-def get_user(user_id: int) -> dict:
-    conn = _connect()
+def get_user(user_id: int):
+    conn = get_connection()
     c = conn.cursor()
 
     c.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
     row = c.fetchone()
+    conn.close()
 
     if not row:
-        # 🔑 АВТОСТВОРЕННЯ КОРИСТУВАЧА
-        c.execute("""
-            INSERT INTO users (
-                user_id, language, plan, plan_expires,
-                interval, threshold, exchange, timezone
-            ) VALUES (?, 'uk', 'FREE', NULL, 5, 1.5, 'BingX', 'UTC')
-        """, (user_id,))
-        conn.commit()
-
-        c.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
-        row = c.fetchone()
-
-    conn.close()
+        return None
 
     return {
         "user_id": row[0],
@@ -76,69 +65,68 @@ def get_user(user_id: int) -> dict:
     }
 
 
-def add_or_update_user(user_id: int, **fields):
+def add_or_update_user(user_id: int, data: dict):
     user = get_user(user_id)
 
-    data = {
-        "language": fields.get("language", user["language"]),
-        "plan": fields.get("plan", user["plan"]),
-        "plan_expires": (
-            fields["plan_expires"].isoformat()
-            if fields.get("plan_expires")
-            else user["plan_expires"].isoformat()
-            if user["plan_expires"]
-            else None
-        ),
-        "interval": fields.get("interval", user["interval"]),
-        "threshold": fields.get("threshold", user["threshold"]),
-        "exchange": fields.get("exchange", user["exchange"]),
-        "timezone": fields.get("timezone", user["timezone"]),
+    payload = {
+        "language": data.get("language", user["language"] if user else "uk"),
+        "plan": data.get("plan", user["plan"] if user else "FREE"),
+        "plan_expires": data.get("plan_expires"),
+        "interval": data.get("interval", user["interval"] if user else 5),
+        "threshold": data.get("threshold", user["threshold"] if user else 1.5),
+        "exchange": data.get("exchange", user["exchange"] if user else "BingX"),
+        "timezone": data.get("timezone", user["timezone"] if user else "UTC"),
     }
 
-    conn = _connect()
+    expires = payload["plan_expires"].isoformat() if payload["plan_expires"] else None
+
+    conn = get_connection()
     c = conn.cursor()
 
     c.execute("""
-        UPDATE users SET
-            language = ?,
-            plan = ?,
-            plan_expires = ?,
-            interval = ?,
-            threshold = ?,
-            exchange = ?,
-            timezone = ?
-        WHERE user_id = ?
+        INSERT INTO users (
+            user_id, language, plan, plan_expires,
+            interval, threshold, exchange, timezone
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+            language = excluded.language,
+            plan = excluded.plan,
+            plan_expires = excluded.plan_expires,
+            interval = excluded.interval,
+            threshold = excluded.threshold,
+            exchange = excluded.exchange,
+            timezone = excluded.timezone
     """, (
-        data["language"],
-        data["plan"],
-        data["plan_expires"],
-        data["interval"],
-        data["threshold"],
-        data["exchange"],
-        data["timezone"],
-        user_id
+        user_id,
+        payload["language"],
+        payload["plan"],
+        expires,
+        payload["interval"],
+        payload["threshold"],
+        payload["exchange"],
+        payload["timezone"],
     ))
 
     conn.commit()
     conn.close()
 
 
-def get_plan(user_id: int) -> str:
+def get_plan(user_id: int):
     user = get_user(user_id)
-
-    if (
-        user["plan"] == "PRO"
-        and user["plan_expires"]
-        and user["plan_expires"] < datetime.utcnow()
-    ):
-        add_or_update_user(user_id, plan="FREE", plan_expires=None)
+    if not user:
         return "FREE"
+
+    if user["plan"] == "PRO" and user["plan_expires"]:
+        if user["plan_expires"] < datetime.utcnow():
+            add_or_update_user(user_id, {"plan": "FREE", "plan_expires": None})
+            return "FREE"
 
     return user["plan"]
 
 
 def increment_early_bird():
-    conn = _connect()
+    conn = get_connection()
     c = conn.cursor()
 
     c.execute("""
@@ -151,12 +139,12 @@ def increment_early_bird():
     conn.close()
 
 
-def get_early_bird_count() -> int:
-    conn = _connect()
+def get_early_bird_count():
+    conn = get_connection()
     c = conn.cursor()
 
     c.execute("SELECT value FROM stats WHERE key = 'early_bird'")
     row = c.fetchone()
-
     conn.close()
+
     return row[0] if row else 0

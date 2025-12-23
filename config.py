@@ -1,16 +1,13 @@
-# config.py — Безпечна версія (токен і гаманець беруться з змінних Render)
 import os
 
-# Токен бота — береться з змінної середовища Render (обов'язково додай її там)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+PROXY_URL = os.getenv("PROXY_URL")
 
-# USDT-гаманець для виводу з Crypto Pay (додай як змінну на Render, якщо хочеш)
-USDT_WALLET = os.getenv("USDT_WALLET", "")
+# Фільтри
+FREE_MAX_FUNDING = 1.5  # %
+DEFAULT_FREE_EXCHANGE = "Bybit"
+ALL_EXCHANGES = ["Bybit", "Binance", "FTX", "Huobi", "OKX", "KuCoin", "BingX", "Kraken", "Bitget"]
 
-# Твій admin ID (можеш залишити в коді або теж в змінну)
-ADMIN_ID = 123456789  # заміни на свій user_id з @userinfobot
-
-# Налаштування бота
-EARLY_BIRD_LIMIT = 500      # кількість безкоштовних PRO на старті
-PRO_PRICE_USDT = 50         # ціна PRO в USDT
-PRO_DAYS = 30               # кількість днів PRO
+# Early bird
+EARLY_BIRD_TOTAL = 500
+EARLY_BIRD_DURATION_DAYS = 30

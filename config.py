@@ -3,11 +3,19 @@ import os
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 PROXY_URL = os.getenv("PROXY_URL")
 
-# Фільтри
-FREE_MAX_FUNDING = 1.5  # %
-DEFAULT_FREE_EXCHANGE = "Bybit"
-ALL_EXCHANGES = ["Bybit", "Binance", "FTX", "Huobi", "OKX", "KuCoin", "BingX", "Kraken", "Bitget"]
+EARLY_BIRD_LIMIT = 500
 
-# Early bird
-EARLY_BIRD_TOTAL = 500
-EARLY_BIRD_DURATION_DAYS = 30
+FREE_MAX_FUNDING = 1.5
+DEFAULT_EXCHANGE = ["bybit"]
+
+EXCHANGES = [
+    "bybit",
+    "binance",
+    "okx",
+    "bingx",
+    "bitget",
+    "mexc",
+    "gate",
+    "kucoin",
+    "coinex",
+]

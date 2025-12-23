@@ -1,29 +1,15 @@
-from datetime import datetime
+import json
+import os
 
-USERS = {}
-EARLY_BIRD_COUNT = 0
+DB_FILE = "database.json"
 
-def init_db():
-    global USERS
-    USERS = {}
+def db_load():
+    if not os.path.exists(DB_FILE):
+        # Структура бази за замовчуванням
+        return {"early_bird_remaining": 500, "users": {}}
+    with open(DB_FILE, "r") as f:
+        return json.load(f)
 
-def get_user(user_id):
-    return USERS.get(user_id)
-
-def add_or_update_user(user_id, data):
-    if user_id not in USERS:
-        USERS[user_id] = {}
-    USERS[user_id].update(data)
-
-def get_plan(user_id):
-    user = get_user(user_id)
-    if not user:
-        return "FREE"
-    return user.get("plan", "FREE")
-
-def increment_early_bird():
-    global EARLY_BIRD_COUNT
-    EARLY_BIRD_COUNT += 1
-
-def get_early_bird_count():
-    return EARLY_BIRD_COUNT
+def db_save(data):
+    with open(DB_FILE, "w") as f:
+        json.dump(data, f, indent=4)

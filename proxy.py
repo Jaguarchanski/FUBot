@@ -1,8 +1,7 @@
-# Проксі для запитів до бірж
-HTTP_PROXY = "http://user:pass@proxy_ip:proxy_port"
-HTTPS_PROXY = "http://user:pass@proxy_ip:proxy_port"
+import os
+from config import PROXY_URL
 
-PROXIES = {
-    "http": HTTP_PROXY,
-    "https": HTTPS_PROXY
-}
+def get_proxy():
+    if PROXY_URL:
+        return PROXY_URL
+    return None

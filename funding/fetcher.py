@@ -1,10 +1,11 @@
-from exchanges import bybit, binance, okx, ftx, huobi, kucoin, gateio, bitget, bitmart
+from exchanges import binance, bybit, okx, ftx, huobi, kucoin, gateio, bitget, bitmart
 
-EXCHANGE_MODULES = [bybit, binance, okx, ftx, huobi, kucoin, gateio, bitget, bitmart]
+EXCHANGES = [binance, bybit, okx, ftx, huobi, kucoin, gateio, bitget, bitmart]
 
 async def fetch_all():
-    results = []
-    for module in EXCHANGE_MODULES:
-        data = await module.fetch_funding()
-        results.extend(data)
+    results = {}
+    for exchange in EXCHANGES:
+        # Припустимо лише BTCUSDT для MVP
+        rate = await exchange.get_funding_rate("BTCUSDT")
+        results[exchange.__name__] = rate
     return results

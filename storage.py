@@ -1,28 +1,14 @@
-from typing import Dict
-from datetime import datetime
+# Зберігає користувачів та їхні пороги funding
+# Для простоти - зберігаємо у пам'яті (пізніше можна додати БД)
 
-class User:
-    def __init__(self, chat_id: int, plan: str = "free"):
-        self.chat_id = chat_id
-        self.plan = plan  # free або paid
-        self.threshold = 1.5  # default для free
-        self.exchanges = ["bybit"]  # default для free
-        self.timezone_offset = 0
-        self.alert_minutes = 5
-        self.early_bird_start = datetime.now()
+users = {}
 
-class Storage:
-    def __init__(self):
-        self.users: Dict[int, User] = {}
-        self.early_bird_counter = 0
+def add_user(chat_id: int, plan: str = "free", funding_threshold: float = 1.5):
+    users[chat_id] = {"plan": plan, "threshold": funding_threshold}
 
-    def add_user(self, chat_id: int):
-        if chat_id not in self.users:
-            plan = "free"
-            if self.early_bird_counter < 500:
-                plan = "early_bird"
-                self.early_bird_counter += 1
-            self.users[chat_id] = User(chat_id, plan)
-        return self.users[chat_id]
+def update_threshold(chat_id: int, threshold: float):
+    if chat_id in users:
+        users[chat_id]["threshold"] = threshold
 
-storage = Storage()
+def get_users():
+    return users

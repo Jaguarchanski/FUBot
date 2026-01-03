@@ -3,6 +3,5 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # https://yourdomain.com/webhook
-PORT = int(os.getenv("PORT", 8000))
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+FUNDING_THRESHOLD_FREE = 1.5  # % для безкоштовного плану

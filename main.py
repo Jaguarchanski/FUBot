@@ -1,19 +1,28 @@
-import asyncio
 from fastapi import FastAPI, Request
-from bot import app as tg_app
+from telegram.ext import Application, CommandHandler
+from bot import start, set_threshold
+from config import BOT_TOKEN
 from notifier import notify_loop
-import uvicorn
+import asyncio
 
-API = FastAPI()
+app = FastAPI()
+application = Application.builder().token(BOT_TOKEN).build()
 
-@API.post("/webhook")
+# Telegram handlers
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CommandHandler("set_threshold", set_threshold))
+
+# FastAPI webhook
+@app.post("/webhook")
 async def webhook(req: Request):
-    data = await req.json()
-    update = tg_app.update_queue.update_from_dict(data)
-    await tg_app.update_queue.put(update)
+    update = await req.json()
+    await application.update_queue.put(update)
     return {"ok": True}
 
-if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    loop.create_task(notify_loop())
-    uvicorn.run(API, host="0.0.0.0", port=8000)
+# Background task
+async def startup():
+    asyncio.create_task(notify_loop(application))
+
+@app.on_event("startup")
+async def on_startup():
+    await startup()

@@ -1,34 +1,19 @@
-import os
 import asyncio
 from fastapi import FastAPI, Request
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler
-
-from bot import start, set_threshold
+from bot import app as tg_app
 from notifier import notify_loop
-from config import BOT_TOKEN, WEBHOOK_URL, PROXY_URL
+import uvicorn
 
-app = FastAPI()
+API = FastAPI()
 
-application = ApplicationBuilder().token(BOT_TOKEN).build()
-application.add_handler(CommandHandler("start", start))
-application.add_handler(CommandHandler("set_threshold", set_threshold))
-
-@app.post("/webhook")
-async def webhook(request: Request):
-    data = await request.json()
-    update = Update.de_json(data, application.bot)
-    await application.update_queue.put(update)
+@API.post("/webhook")
+async def webhook(req: Request):
+    data = await req.json()
+    update = tg_app.update_queue.update_from_dict(data)
+    await tg_app.update_queue.put(update)
     return {"ok": True}
 
-# запуск funding loop у background
-async def main():
-    asyncio.create_task(notify_loop(application))
-    await application.initialize()
-    await application.start()
-    await application.bot.set_webhook(WEBHOOK_URL)
-    await application.updater.start_polling()  # FastAPI буде отримувати webhook, polling тут можна вимкнути
-    await application.updater.idle()
-
 if __name__ == "__main__":
-    asyncio.run(main())
+    loop = asyncio.get_event_loop()
+    loop.create_task(notify_loop())
+    uvicorn.run(API, host="0.0.0.0", port=8000)

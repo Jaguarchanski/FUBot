@@ -1,20 +1,28 @@
 from telegram import Update
-from telegram.ext import ContextTypes, CommandHandler
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from storage import add_user, update_threshold
 
-from storage import storage
+app = ApplicationBuilder().token("YOUR_TOKEN_HERE").build()
+bot = app.bot
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = storage.add_user(update.effective_chat.id)
+    chat_id = update.effective_chat.id
+    add_user(chat_id)
     await update.message.reply_text(
-        f"Привіт! Ти отримав {user.plan} план.\n"
-        f"Залишилось місць для early-bird: {500 - storage.early_bird_counter}"
+        "Привіт! Твій funding alert бот активований. Можеш змінити поріг /threshold <value>."
     )
 
-async def set_threshold(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def threshold(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    if len(context.args) != 1:
+        await update.message.reply_text("Використання: /threshold <value>")
+        return
     try:
         value = float(context.args[0])
-        user = storage.users[update.effective_chat.id]
-        user.threshold = value
-        await update.message.reply_text(f"Мінімальний поріг встановлено на {value}%")
-    except:
-        await update.message.reply_text("Введіть число після /set_threshold")
+        update_threshold(chat_id, value)
+        await update.message.reply_text(f"Поріг funding оновлено на {value}%")
+    except ValueError:
+        await update.message.reply_text("Введіть правильне число")
+
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("threshold", threshold))

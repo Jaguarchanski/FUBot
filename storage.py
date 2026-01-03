@@ -1,29 +1,28 @@
-import asyncio
+from typing import Dict
+from datetime import datetime
 
-# Просте in-memory сховище для MVP
-USERS = {}  # chat_id -> user_data
-EARLY_BIRD_COUNTER = 0
-lock = asyncio.Lock()
+class User:
+    def __init__(self, chat_id: int, plan: str = "free"):
+        self.chat_id = chat_id
+        self.plan = plan  # free або paid
+        self.threshold = 1.5  # default для free
+        self.exchanges = ["bybit"]  # default для free
+        self.timezone_offset = 0
+        self.alert_minutes = 5
+        self.early_bird_start = datetime.now()
 
-async def add_user(chat_id):
-    global EARLY_BIRD_COUNTER
-    async with lock:
-        if chat_id not in USERS:
+class Storage:
+    def __init__(self):
+        self.users: Dict[int, User] = {}
+        self.early_bird_counter = 0
+
+    def add_user(self, chat_id: int):
+        if chat_id not in self.users:
             plan = "free"
-            early_bird = False
-            if EARLY_BIRD_COUNTER < 500:
-                early_bird = True
-                EARLY_BIRD_COUNTER += 1
+            if self.early_bird_counter < 500:
                 plan = "early_bird"
-            USERS[chat_id] = {
-                "plan": plan,
-                "early_bird": early_bird,
-                "threshold": 1.5,
-                "exchanges": ["bybit"],
-                "notify_minutes": 5,
-            }
-            return USERS[chat_id]
-        return USERS[chat_id]
+                self.early_bird_counter += 1
+            self.users[chat_id] = User(chat_id, plan)
+        return self.users[chat_id]
 
-def get_users():
-    return USERS
+storage = Storage()

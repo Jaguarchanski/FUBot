@@ -1,11 +1,13 @@
-from exchanges import binance, bybit, okx, ftx, huobi, kucoin, gateio, bitget, bitmart
+from exchanges import binance, bybit, okx, bitget, gateio, kucoin, mexc, huobi, bingx
 
-EXCHANGES = [binance, bybit, okx, ftx, huobi, kucoin, gateio, bitget, bitmart]
+EXCHANGES = [binance, bybit, okx, bitget, gateio, kucoin, mexc, huobi, bingx]
 
 async def fetch_all():
     results = {}
-    for exchange in EXCHANGES:
-        # Припустимо лише BTCUSDT для MVP
-        rate = await exchange.get_funding_rate("BTCUSDT")
-        results[exchange.__name__] = rate
+    for ex in EXCHANGES:
+        try:
+            rate = await ex()
+            results[ex.__name__] = rate
+        except Exception as e:
+            results[ex.__name__] = None
     return results

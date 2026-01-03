@@ -1,20 +1,20 @@
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler
-from storage import add_user
+from telegram import Update
+from telegram.ext import ContextTypes, CommandHandler
+
+from storage import storage
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_data = await add_user(update.effective_chat.id)
-    if user_data["early_bird"]:
-        remaining = 500 - sum(1 for u in context.bot_data.get("users", {}).values() if u["early_bird"])
-        await update.message.reply_text(
-            f"Привіт! Ти отримав безкоштовний тестовий місяць. Залишилось {remaining} місць."
-        )
-    else:
-        await update.message.reply_text("Привіт! Ти на безкоштовному плані.")
+    user = storage.add_user(update.effective_chat.id)
+    await update.message.reply_text(
+        f"Привіт! Ти отримав {user.plan} план.\n"
+        f"Залишилось місць для early-bird: {500 - storage.early_bird_counter}"
+    )
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("/start - почати\n/help - допомога")
-
-def register_handlers(application):
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", help_command))
+async def set_threshold(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        value = float(context.args[0])
+        user = storage.users[update.effective_chat.id]
+        user.threshold = value
+        await update.message.reply_text(f"Мінімальний поріг встановлено на {value}%")
+    except:
+        await update.message.reply_text("Введіть число після /set_threshold")

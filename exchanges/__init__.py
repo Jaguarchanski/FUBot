@@ -1,1 +1,2 @@
-# Порожній файл, щоб Python бачив папку як пакет
+# Імпорти бірж для fetcher.py
+from . import binance, bybit, okx, mexc, huobi, kucoin, gateio, bitget, huobi, bingx

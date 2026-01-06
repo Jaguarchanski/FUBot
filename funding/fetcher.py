@@ -1,38 +1,52 @@
 import ccxt.async_support as ccxt
 import asyncio
 import logging
-from config import config
+import os
+
+PROXY_URL = os.getenv("PROXY_URL")
 
 async def fetch_exchange_data(exchange_id):
     ex = None
     try:
+        conf = {
+            'options': {'defaultType': 'swap'},
+            'timeout': 20000,
+            'enableRateLimit': True
+        }
+        if PROXY_URL:
+            conf['aiohttp_proxy'] = PROXY_URL
+            
         ex_class = getattr(ccxt, exchange_id)
-        ex = ex_class({'options': {'defaultType': 'swap'}, 'timeout': 20000})
+        ex = ex_class(conf)
         
-        # Спеціальна обробка для бірж, де fetchFundingRates не працює
-        if exchange_id in ['kucoin', 'mexc', 'huobi']:
-            # Для простоти беремо основні пари, якщо масовий запит не підтримується
-            ticker = await ex.fetch_funding_rate('BTC/USDT:USDT')
-            return [{
-                'exchange': exchange_id.upper(),
-                'symbol': ticker['symbol'],
-                'rate': ticker['fundingRate'] * 100
-            }]
-        
-        rates = await ex.fetch_funding_rates()
-        return [
-            {'exchange': exchange_id.upper(), 'symbol': s, 'rate': i['fundingRate'] * 100}
-            for s, i in rates.items() if 'USDT' in s and i.get('fundingRate') is not None
-        ]
+        # Спроба отримати всі фандинги
+        try:
+            rates = await ex.fetch_funding_rates()
+            return [
+                {'exchange': exchange_id.upper(), 'symbol': s, 'rate': i['fundingRate'] * 100}
+                for s, i in rates.items() if i.get('fundingRate') is not None
+            ]
+        except:
+            # Якщо масовий запит не підтримується, беремо лише BTC
+            # Пробуємо різні формати символів
+            for sym in ['BTC/USDT:USDT', 'BTC/USDT', 'BTC-USDT']:
+                try:
+                    r = await ex.fetch_funding_rate(sym)
+                    return [{'exchange': exchange_id.upper(), 'symbol': sym, 'rate': r['fundingRate'] * 100}]
+                except:
+                    continue
+            return []
+
     except Exception as e:
-        logging.error(f"Error fetching {exchange_id}: {str(e)[:100]}")
+        logging.error(f"Error {exchange_id}: {str(e)[:50]}")
         return []
     finally:
         if ex:
-            await ex.close() # Важливо: завжди закриваємо з'єднання
+            await ex.close() # Це прибере помилки "Unclosed client session"
 
 async def fetch_all_funding_rates():
-    # Запускаємо запити паралельно, але з контролем
+    # Список бірж з конфігу
+    from config import config
     tasks = [fetch_exchange_data(ex_id) for ex_id in config.EXCHANGES]
     results = await asyncio.gather(*tasks)
     return [item for sublist in results for item in sublist]

@@ -1,9 +1,0 @@
-from .binance import get_funding_rate as binance
-from .bybit import get_funding_rate as bybit
-from .okx import get_funding_rate as okx
-from .bitget import get_funding_rate as bitget
-from .gateio import get_funding_rate as gateio
-from .kucoin import get_funding_rate as kucoin
-from .mexc import get_funding_rate as mexc
-from .huobi import get_funding_rate as huobi
-from .bingx import get_funding_rate as bingx

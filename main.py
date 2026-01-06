@@ -1,62 +1,28 @@
-import sys
-import os
 import logging
-from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from telegram import Update
-from telegram.ext import Application, CommandHandler
-
-# Виправляємо шлях, щоб Python бачив папки як модулі
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-
-from config import config
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler
+from config import TELEGRAM_TOKEN
+from telegram_bot.bot import start_command, button_handler
 from database.db import init_db
-from telegram_bot.bot import start_command, threshold_command, list_command
 
+# Налаштування логів
 logging.basicConfig(level=logging.INFO)
 
-# Ініціалізація Telegram Application
-application = Application.builder().token(config.TELEGRAM_TOKEN).build()
+app = FastAPI()
+tg_app = Application.builder().token(TELEGRAM_TOKEN).build()
 
-# Реєстрація команд
-application.add_handler(CommandHandler("start", start_command))
-application.add_handler(CommandHandler("threshold", threshold_command))
-application.add_handler(CommandHandler("list", list_command))
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # 1. Запуск бота
-    await application.initialize()
-    await application.start()
-    
-    # 2. Налаштування вебхука
-    webhook_url = f"{config.WEBHOOK_URL.rstrip('/')}/webhook"
-    await application.bot.set_webhook(url=webhook_url)
-    logging.info(f"🚀 FURate запущено: {webhook_url}")
-    
-    # 3. База даних
-    await init_db()
-    
-    yield
-    
-    # Зупинка при вимкненні сервера
-    await application.stop()
-    await application.shutdown()
-
-app = FastAPI(lifespan=lifespan)
+@app.on_event("startup")
+async def startup():
+    await init_db() # Ініціалізація бази при старті
+    tg_app.add_handler(CommandHandler("start", start_command))
+    tg_app.add_handler(CallbackQueryHandler(button_handler)) # Обробник кнопок
+    await tg_app.initialize()
+    await tg_app.start()
 
 @app.post("/webhook")
-async def webhook_handler(request: Request):
+async def webhook(request: Request):
     data = await request.json()
-    update = Update.de_json(data, application.bot)
-    await application.process_update(update)
+    update = Update.de_json(data, tg_app.bot)
+    await tg_app.process_update(update)
     return {"status": "ok"}
-
-@app.get("/")
-async def index():
-    return {"status": "FURate is Online"}
-
-if __name__ == "__main__":
-    import uvicorn
-    port = int(os.getenv("PORT", 10000))
-    uvicorn.run(app, host="0.0.0.0", port=port)

@@ -1,27 +1,19 @@
 import asyncio
-from telegram.ext import Application
-from storage import get_users
-from funding import fetcher, analyzer
-from config import FUNDING_THRESHOLD_FREE
+from bot import application
+from storage import get_active_users
 
-async def notify_loop(app: Application):
+async def fetch_funding():
+    # Заглушка funding, тут пізніше підключимо API бірж
+    return {"Binance": 0.7, "Bybit": 1.2}
+
+async def start_notify_loop():
     while True:
-        users = get_users()
-        if not users:
-            await asyncio.sleep(5)
-            continue
-
-        data = await fetcher.fetch_all()
-        for chat_id, settings in users.items():
-            threshold = settings.get("threshold", FUNDING_THRESHOLD_FREE)
-            messages = []
-            for ex_name, rate in data.items():
-                if analyzer.check_threshold(rate, threshold):
-                    messages.append(f"{ex_name}: {rate}%")
-            if messages:
-                text = "\n".join(messages)
-                try:
-                    await app.bot.send_message(chat_id=chat_id, text=text)
-                except:
-                    pass
-        await asyncio.sleep(60)  # перевірка кожну хвилину
+        data = await fetch_funding()
+        users = get_active_users()
+        for chat_id in users:
+            msg = "📊 Funding Rates:\n" + "\n".join([f"{ex}: {val}%" for ex, val in data.items()])
+            try:
+                await application.bot.send_message(chat_id=chat_id, text=msg)
+            except Exception as e:
+                print(f"❌ Cannot send to {chat_id}: {e}")
+        await asyncio.sleep(60)  # Перевірка кожні 60 секунд

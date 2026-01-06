@@ -1,37 +1,21 @@
-# main.py
-import os
-import asyncio
 from fastapi import FastAPI, Request
-from dotenv import load_dotenv
-from bot import bot, setup_handlers
-from notifier import notify_loop
-
-load_dotenv()
-
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+from bot import setup_handlers
+from notifier import start_notify_loop
+import uvicorn
 
 app = FastAPI()
 
-# Налаштовуємо хендлери Telegram бота
-setup_handlers(bot)
+# Старт бота
+setup_handlers()
 
-# Фоновий таск для сповіщень
 @app.on_event("startup")
 async def startup_event():
-    # Запускаємо Telegram бота
-    asyncio.create_task(bot.initialize())
-    # Запускаємо notify loop
-    asyncio.create_task(notify_loop(bot))
+    print("🔹 Starting notify loop...")
+    await start_notify_loop()
 
-# Webhook endpoint
-@app.post(f"/webhook/{BOT_TOKEN}")
-async def telegram_webhook(request: Request):
-    data = await request.json()
-    update = bot.types.Update.de_json(data)
-    await bot.update_queue.put(update)
-    return {"ok": True}
+@app.get("/")
+async def root():
+    return {"status": "ok"}
 
-# Точка для локального запуску (тільки для дебагу)
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
+    uvicorn.run(app, host="0.0.0.0", port=8000)

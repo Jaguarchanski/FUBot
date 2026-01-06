@@ -1,53 +1,74 @@
 import ccxt.async_support as ccxt
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
 async def get_top_funding_rates(exchange_id: str, limit: int = 10):
     """
-    Отримує топ ставок фінансування для обраної біржі.
+    Fetches funding rates using a proxy from environment variables 
+    to bypass geo-restrictions on Render.
     """
-    # Динамічно отримуємо клас біржі з ccxt
+    proxy_url = os.getenv("PROXY_URL")
+    
+    config = {
+        'enableRateLimit': True,
+        'options': {'defaultType': 'swap'}
+    }
+
+    # Add proxy if available in .env
+    if proxy_url:
+        config['aiohttp_proxy'] = proxy_url
+        logger.info(f"Using proxy for {exchange_id}")
+
+    # Special handling for Binance URL
+    if exchange_id == 'binance':
+        config['urls'] = {'api': {'fapi': 'https://fapi.binance.com/fapi/v1'}}
+
     exchange_class = getattr(ccxt, exchange_id, None)
     if not exchange_class:
-        return "❌ Ця біржа поки не підтримується."
+        return f"❌ Exchange {exchange_id} not supported."
 
-    exchange = exchange_class()
+    exchange = exchange_class(config)
+    
     try:
-        await exchange.load_markets()
-        
-        # Перевіряємо, чи біржа підтримує отримання ставок фінансування
-        if not exchange.has.get('fetchFundingRates', False):
-            return f"⚠️ Біржа {exchange_id.capitalize()} не надає загальний список ставок через API."
+        if exchange_id == 'binance':
+            rates_data = await exchange.fapiPublicGetPremiumIndex()
+            valid_rates = [
+                (item['symbol'], float(item['lastFundingRate'])) 
+                for item in rates_data if 'lastFundingRate' in item
+            ]
+        else:
+            await exchange.load_markets()
+            if exchange.has.get('fetchFundingRates'):
+                rates = await exchange.fetch_funding_rates()
+                valid_rates = [
+                    (symbol, data['fundingRate']) 
+                    for symbol, data in rates.items() 
+                    if data.get('fundingRate') is not None
+                ]
+            else:
+                # Fallback for exchanges without bulk fetch
+                return f"⚠️ {exchange_id.upper()} doesn't support bulk fetch."
 
-        # Отримуємо ставки
-        rates = await exchange.fetch_funding_rates()
-        
-        # Відфільтровуємо лише безстрокові ф'ючерси (Perpetual) та сортуємо
-        # Беремо значення fundingRate, ігноруючи None
-        valid_rates = [
-            (symbol, data['fundingRate']) 
-            for symbol, data in rates.items() 
-            if data.get('fundingRate') is not None
-        ]
-        
-        # Сортуємо: спочатку найбільші позитивні ставки
+        if not valid_rates:
+            return f"😕 No data found for {exchange_id.upper()}."
+
+        # Sort: Highest positive rates first
         sorted_rates = sorted(valid_rates, key=lambda x: x[1], reverse=True)
 
-        if not sorted_rates:
-            return f"😕 На даний момент не знайдено активних ставок на {exchange_id.capitalize()}."
-
-        report = f"📊 **Топ-{limit} ставок на {exchange_id.capitalize()}**\n"
-        report += "*(у відсотках за 8 годин)*\n\n"
+        report = f"📊 **TOP-{limit} Funding: {exchange_id.upper()}**\n"
+        report += "*(Rates in % per 8h/1h)*\n\n"
         
         for i, (symbol, rate) in enumerate(sorted_rates[:limit], 1):
-            emoji = "🔴" if rate > 0.0001 else "🟢" # Червоний, якщо платять лонгісти
-            report += f"{i}. {emoji} `{symbol}`: **{rate*100:.4f}%**\n"
+            emoji = "🔴" if rate > 0 else "🟢"
+            clean_symbol = symbol.split(':')[0].split('/')[0]
+            report += f"{i}. {emoji} `{clean_symbol}`: **{rate*100:.4f}%**\n"
             
         return report
 
     except Exception as e:
-        logger.error(f"CCXT Error for {exchange_id}: {e}")
-        return f"❌ Помилка API {exchange_id.capitalize()}: {str(e)[:50]}..."
+        logger.error(f"Error fetching from {exchange_id}: {e}")
+        return f"❌ Connection error with {exchange_id.upper()}. Check proxy or API status."
     finally:
         await exchange.close()

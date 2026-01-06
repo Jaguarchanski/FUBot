@@ -1,6 +1,6 @@
-python-telegram-bot>=22.0
 fastapi
 uvicorn
-aiohttp
-pytz
+python-telegram-bot
+ccxt
+aiosqlite
 python-dotenv

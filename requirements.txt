@@ -4,3 +4,4 @@ python-telegram-bot
 ccxt
 aiosqlite
 python-dotenv
+apscheduler==3.10.4

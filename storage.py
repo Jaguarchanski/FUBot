@@ -1,11 +1,12 @@
-users = {}  # chat_id -> {"threshold": float}
+# Просте сховище користувачів у пам'яті
+users = {}
 
-def add_user(chat_id: int, threshold: float = 1.5):
-    users[chat_id] = {"threshold": threshold}
+def add_user(chat_id):
+    if chat_id not in users:
+        users[chat_id] = {"threshold": 1.5, "active": True}
 
-def update_threshold(chat_id: int, threshold: float):
-    if chat_id in users:
-        users[chat_id]["threshold"] = threshold
+def get_user(chat_id):
+    return users.get(chat_id)
 
-def get_users():
-    return users
+def get_active_users():
+    return [uid for uid, u in users.items() if u["active"]]

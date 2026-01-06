@@ -1,74 +1,69 @@
 import ccxt.async_support as ccxt
 import logging
 import os
+import asyncio
 
 logger = logging.getLogger(__name__)
 
-async def get_top_funding_rates(exchange_id: str, limit: int = 10):
+# Налаштування проксі (якщо є)
+PROXY_URL = os.getenv("PROXY_URL")
+
+async def get_funding_rates(exchange_id: str):
     """
-    Fetches funding rates using a proxy from environment variables 
-    to bypass geo-restrictions on Render.
+    Отримує ставки фінансування для конкретної біржі.
     """
-    proxy_url = os.getenv("PROXY_URL")
-    
-    config = {
-        'enableRateLimit': True,
-        'options': {'defaultType': 'swap'}
-    }
-
-    # Add proxy if available in .env
-    if proxy_url:
-        config['aiohttp_proxy'] = proxy_url
-        logger.info(f"Using proxy for {exchange_id}")
-
-    # Special handling for Binance URL
-    if exchange_id == 'binance':
-        config['urls'] = {'api': {'fapi': 'https://fapi.binance.com/fapi/v1'}}
-
     exchange_class = getattr(ccxt, exchange_id, None)
     if not exchange_class:
-        return f"❌ Exchange {exchange_id} not supported."
+        logger.error(f"Біржа {exchange_id} не підтримується CCXT")
+        return None
+
+    # Ініціалізація біржі з проксі, якщо він вказаний
+    config = {
+        'enableRateLimit': True,
+    }
+    if PROXY_URL:
+        config['proxies'] = {'http': PROXY_URL, 'https': PROXY_URL}
+        logger.info(f"Використання проксі для {exchange_id}")
 
     exchange = exchange_class(config)
     
     try:
-        if exchange_id == 'binance':
-            rates_data = await exchange.fapiPublicGetPremiumIndex()
-            valid_rates = [
-                (item['symbol'], float(item['lastFundingRate'])) 
-                for item in rates_data if 'lastFundingRate' in item
-            ]
-        else:
-            await exchange.load_markets()
-            if exchange.has.get('fetchFundingRates'):
-                rates = await exchange.fetch_funding_rates()
-                valid_rates = [
-                    (symbol, data['fundingRate']) 
-                    for symbol, data in rates.items() 
-                    if data.get('fundingRate') is not None
-                ]
-            else:
-                # Fallback for exchanges without bulk fetch
-                return f"⚠️ {exchange_id.upper()} doesn't support bulk fetch."
-
-        if not valid_rates:
-            return f"😕 No data found for {exchange_id.upper()}."
-
-        # Sort: Highest positive rates first
-        sorted_rates = sorted(valid_rates, key=lambda x: x[1], reverse=True)
-
-        report = f"📊 **TOP-{limit} Funding: {exchange_id.upper()}**\n"
-        report += "*(Rates in % per 8h/1h)*\n\n"
+        # Спроба отримати всі ставки фінансування
+        # Примітка: методи можуть відрізнятися залежно від біржі в CCXT
+        funding_rates = {}
         
-        for i, (symbol, rate) in enumerate(sorted_rates[:limit], 1):
-            emoji = "🔴" if rate > 0 else "🟢"
-            clean_symbol = symbol.split(':')[0].split('/')[0]
-            report += f"{i}. {emoji} `{clean_symbol}`: **{rate*100:.4f}%**\n"
-            
-        return report
+        if exchange_id == 'binance':
+            markets = await exchange.fetch_premium_index()
+            for symbol, data in markets.items():
+                if 'lastFundingRate' in data:
+                    funding_rates[symbol] = float(data['lastFundingRate']) * 100
+        
+        elif exchange_id == 'bybit':
+            # Для Bybit використовуємо fetch_tickers або спеціальний метод
+            tickers = await exchange.fetch_tickers()
+            for symbol, ticker in tickers.items():
+                if 'info' in ticker and 'fundingRate' in ticker['info']:
+                    funding_rates[symbol] = float(ticker['info']['fundingRate']) * 100
+        
+        else:
+            # Універсальний підхід для інших бірж (MEXC, Bitget тощо)
+            # Багато бірж віддають фандинг через fetch_tickers в полі info
+            tickers = await exchange.fetch_tickers()
+            for symbol, ticker in tickers.items():
+                info = ticker.get('info', {})
+                # Різні біржі використовують різні назви полів
+                rate = info.get('fundingRate') or info.get('funding_rate') or info.get('lastFundingRate')
+                if rate is not None:
+                    funding_rates[symbol] = float(rate) * 100
+
+        return funding_rates
 
     except Exception as e:
-        logger.error(f"Error fetching from {exchange_id}: {e}")
-        return f"❌ Connection error with {exchange_id.upper()}. Check proxy or API status."
+        logger.error(f"Помилка при отриманні даних з {exchange_id}: {e}")
+        return None
     finally:
         await exchange.close()
+
+def get_all_exchanges():
+    """Повертає список доступних бірж"""
+    return ["binance", "bybit", "mexc", "bitget", "kucoin", "bingx", "gateio"]

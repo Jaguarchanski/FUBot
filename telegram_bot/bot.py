@@ -1,20 +1,18 @@
-import os
-import httpx
-import aiosqlite
+import os, httpx, aiosqlite
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes, ConversationHandler
 from database.db import DB_PATH
 
-WAITING_THRESHOLD = 1
-CRYPTO_PAY_URL = "https://pay.crypt.bot/api/createInvoice"
+WAITING_THRESHOLD, WAITING_UTC = 1, 2
 
 async def get_settings_keyboard(user_id):
     keyboard = [
-        [InlineKeyboardButton("Set Timezone (UTC)", callback_data="set_tz")],
-        [InlineKeyboardButton("Set Threshold (%)", callback_data="set_threshold")],
-        [InlineKeyboardButton("Alert Lead Time (Min)", callback_data="set_lead_time")],
+        [InlineKeyboardButton("Set Timezone (Manual UTC) 🕒", callback_data="set_tz_manual")],
+        [InlineKeyboardButton("Set Threshold (%) 📊", callback_data="set_threshold")],
+        [InlineKeyboardButton("My Exchanges 🏦", callback_data="manage_exchanges")],
+        [InlineKeyboardButton("Alert Lead Time (Min) 🔔", callback_data="set_lead_time")],
         [InlineKeyboardButton("My Profile 👤", callback_data="my_profile")],
-        [InlineKeyboardButton("Upgrade to Premium (5$ USDT) 💎", callback_data="buy_premium")]
+        [InlineKeyboardButton("Upgrade to Premium (50$ USDT) 💎", callback_data="buy_premium")]
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -30,102 +28,92 @@ async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("⚙️ **Settings Menu**:", reply_markup=await get_settings_keyboard(user_id), parse_mode="Markdown")
 
     elif query.data == "buy_premium":
-        # Створення рахунку в Crypto Bot
         headers = {"Crypto-Pay-API-Token": os.getenv("CRYPTO_BOT_TOKEN")}
-        data = {
-            "asset": "USDT",
-            "amount": "5.00",
-            "description": "Premium Subscription - 30 days",
-            "paid_btn_name": "openBot",
-            "paid_btn_url": f"https://t.me/{(await context.bot.get_me()).username}"
-        }
-        
+        data = {"asset": "USDT", "amount": "50.00", "description": "Premium 30 Days", "paid_btn_name": "openBot", "paid_btn_url": f"https://t.me/{(await context.bot.get_me()).username}"}
         async with httpx.AsyncClient() as client:
-            response = await client.post(CRYPTO_PAY_URL, headers=headers, json=data)
-            res_data = response.json()
-            
+            res = await client.post("https://pay.crypt.bot/api/createInvoice", headers=headers, json=data)
+            res_data = res.json()
             if res_data.get("ok"):
                 pay_url = res_data["result"]["pay_url"]
                 invoice_id = res_data["result"]["invoice_id"]
-                
-                keyboard = [
-                    [InlineKeyboardButton("Pay 5.00 USDT 💸", url=pay_url)],
-                    [InlineKeyboardButton("Check Payment ✅", callback_data=f"check_{invoice_id}")],
-                    back_button()
-                ]
-                await query.edit_message_text(
-                    "💎 **Upgrade to Premium**\n\nAccess to 9 exchanges, instant alerts, and custom thresholds.\n\nClick the button below to pay via **Crypto Bot**:",
-                    reply_markup=InlineKeyboardMarkup(keyboard),
-                    parse_mode="Markdown"
-                )
-            else:
-                await query.edit_message_text("❌ Error creating invoice. Please try later.")
+                kb = [[InlineKeyboardButton("Pay 50.00 USDT 💸", url=pay_url)], [InlineKeyboardButton("Check Payment ✅", callback_data=f"check_{invoice_id}")], back_button()]
+                await query.edit_message_text("💎 **Upgrade to Premium**\nPrice: 50 USDT", reply_markup=InlineKeyboardMarkup(kb))
 
     elif query.data.startswith("check_"):
         invoice_id = query.data.split("_")[1]
         headers = {"Crypto-Pay-API-Token": os.getenv("CRYPTO_BOT_TOKEN")}
-        
         async with httpx.AsyncClient() as client:
-            response = await client.get(f"https://pay.crypt.bot/api/getInvoices?invoice_ids={invoice_id}", headers=headers)
-            res_data = response.json()
-            
+            res = await client.get(f"https://pay.crypt.bot/api/getInvoices?invoice_ids={invoice_id}", headers=headers)
+            res_data = res.json()
             if res_data.get("ok") and res_data["result"]["items"][0]["status"] == "paid":
                 async with aiosqlite.connect(DB_PATH) as db:
                     await db.execute("UPDATE users SET plan = 'Premium' WHERE user_id = ?", (user_id,))
                     await db.commit()
-                await query.edit_message_text("🎉 **Payment Successful!** Your Premium plan is now active.", reply_markup=InlineKeyboardMarkup([back_button()]))
+                await query.edit_message_text("🎉 Payment Successful!", reply_markup=InlineKeyboardMarkup([back_button()]))
             else:
-                await query.answer("Payment not detected yet. Try again in a minute.", show_alert=True)
+                await query.answer("Not paid yet.", show_alert=True)
 
-    # ... інші хендлери (tz, lead_time, my_profile) залишаються такими ж, як у попередній відповіді
-    elif query.data == "set_tz":
-        tz_keyboard = [[InlineKeyboardButton("UTC+0", callback_data="tz_0"), InlineKeyboardButton("UTC+2", callback_data="tz_2")], back_button()]
-        await query.edit_message_text("Select Timezone:", reply_markup=InlineKeyboardMarkup(tz_keyboard))
+    elif query.data == "manage_exchanges":
+        await show_exchanges_menu(query, user_id)
 
-    elif query.data.startswith("tz_"):
-        val = int(query.data.split("_")[1])
+    elif query.data.startswith("toggle_"):
+        ex_name = query.data.replace("toggle_", "")
         async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute("UPDATE users SET timezone = ? WHERE user_id = ?", (val, user_id))
+            await db.execute("UPDATE user_exchanges SET is_enabled = 1 - is_enabled WHERE user_id = ? AND exchange_name = ?", (user_id, ex_name))
             await db.commit()
-        await query.edit_message_text(f"✅ Timezone set to UTC{val:+}", reply_markup=InlineKeyboardMarkup([back_button()]))
+        await show_exchanges_menu(query, user_id)
+
+    elif query.data == "set_tz_manual":
+        await query.edit_message_text("Enter your UTC offset (e.g., `2` or `-5`):", parse_mode="Markdown")
+        return WAITING_UTC
 
     elif query.data == "set_lead_time":
-        lt_keyboard = [
-            [InlineKeyboardButton("5 min", callback_data="lt_5"), InlineKeyboardButton("15 min", callback_data="lt_15")],
-            [InlineKeyboardButton("1 hour", callback_data="lt_60"), InlineKeyboardButton("4 hours", callback_data="lt_240")],
-            back_button()
-        ]
-        await query.edit_message_text("Notify me BEFORE funding:", reply_markup=InlineKeyboardMarkup(lt_keyboard))
+        lt_kb = [[InlineKeyboardButton("5m", callback_data="lt_5"), InlineKeyboardButton("15m", callback_data="lt_15")], [InlineKeyboardButton("1h", callback_data="lt_60"), InlineKeyboardButton("4h", callback_data="lt_240")], back_button()]
+        await query.edit_message_text("Notify me before funding:", reply_markup=InlineKeyboardMarkup(lt_kb))
 
     elif query.data.startswith("lt_"):
         val = int(query.data.split("_")[1])
         async with aiosqlite.connect(DB_PATH) as db:
             await db.execute("UPDATE users SET alert_lead_time = ? WHERE user_id = ?", (val, user_id))
             await db.commit()
-        await query.edit_message_text(f"✅ Lead time: {val} min.", reply_markup=InlineKeyboardMarkup([back_button()]))
+        await query.edit_message_text(f"✅ Set to {val} min.", reply_markup=InlineKeyboardMarkup([back_button()]))
 
     elif query.data == "my_profile":
         async with aiosqlite.connect(DB_PATH) as db:
             async with db.execute("SELECT plan, threshold, timezone, alert_lead_time FROM users WHERE user_id = ?", (user_id,)) as c:
-                row = await c.fetchone()
-                exchanges = "Bybit, BingX, Binance, MEXC, KuCoin, Huobi, Gate.io, OKX, Bitget"
-                text = (f"👤 **Profile**\n\n**Plan:** {row[0]}\n**Threshold:** {row[1]}%\n"
-                        f"**Timezone:** UTC{row[2]:+}\n**Alert:** {row[3]} min before\n\n"
-                        f"**Exchanges:** {exchanges}")
-                await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([back_button()]))
+                r = await c.fetchone()
+            async with db.execute("SELECT exchange_name FROM user_exchanges WHERE user_id = ? AND is_enabled = 1", (user_id,)) as c:
+                exs = ", ".join([x[0] for x in await c.fetchall()])
+        await query.edit_message_text(f"👤 **Profile**\nPlan: {r[0]}\nThreshold: {r[1]}%\nUTC: {r[2]:+}\nLead: {r[3]}m\n\n**Active:** {exs}", reply_markup=InlineKeyboardMarkup([back_button()]), parse_mode="Markdown")
+
+async def show_exchanges_menu(query, user_id):
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT exchange_name, is_enabled FROM user_exchanges WHERE user_id = ?", (user_id,)) as c:
+            rows = await c.fetchall()
+    kb = [[InlineKeyboardButton(f"{'✅' if r[1] else '❌'} {r[0]}", callback_data=f"toggle_{r[0]}")] for r in rows]
+    kb.append(back_button())
+    await query.edit_message_text("🏦 **Select Exchanges:**", reply_markup=InlineKeyboardMarkup(kb))
 
 async def start_threshold_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.callback_query.edit_message_text("Type threshold (e.g. 1.2):", reply_markup=InlineKeyboardMarkup([back_button()]))
+    await update.callback_query.edit_message_text("Type threshold (e.g. 1.5):")
     return WAITING_THRESHOLD
 
+async def start_utc_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.edit_message_text("Enter UTC (e.g. 2):")
+    return WAITING_UTC
+
 async def save_threshold(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        val = float(update.message.text.replace(',', '.'))
-        async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute("UPDATE users SET threshold = ? WHERE user_id = ?", (val, update.effective_user.id))
-            await db.commit()
-        await update.message.reply_text(f"✅ Threshold: {val}%", reply_markup=InlineKeyboardMarkup([back_button()]))
-        return ConversationHandler.END
-    except:
-        await update.message.reply_text("Invalid number. Try again:")
-        return WAITING_THRESHOLD
+    val = float(update.message.text.replace(',', '.'))
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE users SET threshold = ? WHERE user_id = ?", (val, update.effective_user.id))
+        await db.commit()
+    await update.message.reply_text(f"✅ Threshold: {val}%", reply_markup=InlineKeyboardMarkup([back_button()]))
+    return ConversationHandler.END
+
+async def save_utc(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    val = float(update.message.text.replace('+', ''))
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE users SET timezone = ? WHERE user_id = ?", (val, update.effective_user.id))
+        await db.commit()
+    await update.message.reply_text(f"✅ UTC: {val:+}", reply_markup=InlineKeyboardMarkup([back_button()]))
+    return ConversationHandler.END

@@ -1,65 +1,36 @@
+import ccxt.pro as ccxt
 import asyncio
-import ccxt.async_support as ccxt
 import aiosqlite
-import logging
 import os
 from database.db import DB_PATH
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("Scanner")
+EXCHANGES = ['binance', 'bybit', 'okx', 'gateio', 'bitget', 'bingx', 'kucoin', 'mexc', 'htx']
+PROXY = os.getenv("PROXY_URL")
 
-EXCHANGE_IDS = ["binance", "bybit", "okx", "gateio", "bitget", "bingx"]
-
-async def fetch_funding_rates(exchange_id):
-    ex = None
-    raw_proxy = os.getenv("PROXY_URL") 
-    
-    # Формуємо правильний URL для проксі (додаємо http:// якщо немає)
-    proxy_url = None
-    if raw_proxy:
-        proxy_url = raw_proxy if raw_proxy.startswith("http") else f"http://{raw_proxy}"
-
+async def fetch_exchange(ex_id):
     try:
-        exchange_class = getattr(ccxt, exchange_id)
-        config = {
-            'enableRateLimit': True,
-            'options': {'defaultType': 'swap'}
+        conf = {
+            'proxies': {'http': PROXY, 'https': PROXY} if PROXY else {},
+            'timeout': 30000,
+            'enableRateLimit': True
         }
-        
-        # Налаштування проксі для aiohttp (двигуна CCXT)
-        if proxy_url:
-            config['aiohttp_proxy'] = proxy_url
-            
-        ex = exchange_class(config)
-        logger.info(f"🔄 Fetching {exchange_id} (Proxy: {'Active' if proxy_url else 'No'})...")
-        
-        rates = await ex.fetch_funding_rates()
+        ex_instance = getattr(ccxt, ex_id)(conf)
+        await ex_instance.load_markets()
+        rates = await ex_instance.fetch_funding_rates()
         
         async with aiosqlite.connect(DB_PATH) as db:
             for symbol, data in rates.items():
-                rate_val = data.get('fundingRate')
-                if rate_val is None: continue
-                
-                # Зберігаємо raw час (може бути ISO рядок або timestamp)
-                raw_time = data.get('datetime') or data.get('timestamp')
-                
-                await db.execute('''
-                    INSERT OR REPLACE INTO fundings (exchange, symbol, rate, next_funding_time)
-                    VALUES (?, ?, ?, ?)
-                ''', (exchange_id.capitalize(), symbol, rate_val * 100, str(raw_time)))
+                if not data or 'fundingRate' not in data: continue
+                rate_val = data['fundingRate'] * 100
+                await db.execute("INSERT OR REPLACE INTO fundings (exchange, symbol, rate, next_funding_time) VALUES (?, ?, ?, ?)",
+                                 (ex_id, symbol, rate_val, str(data.get('timestamp'))))
             await db.commit()
-        logger.info(f"✅ Updated {exchange_id}")
-            
+        await ex_instance.close()
     except Exception as e:
-        logger.error(f"❌ Error {exchange_id}: {str(e)[:100]}")
-    finally:
-        if ex:
-            await ex.close()
+        print(f"Scanner Error on {ex_id}: {e}")
 
 async def run_scanner():
     while True:
-        for ex_id in EXCHANGE_IDS:
-            await fetch_funding_rates(ex_id)
-            await asyncio.sleep(2) # Маленька пауза між біржами
-        logger.info("💤 Cycle finished. Waiting 5 min...")
-        await asyncio.sleep(300)
+        tasks = [fetch_exchange(ex) for ex in EXCHANGES]
+        await asyncio.gather(*tasks)
+        await asyncio.sleep(60)

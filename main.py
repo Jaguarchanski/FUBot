@@ -1,143 +1,69 @@
 import os
 import logging
-import asyncio
-from dotenv import load_dotenv
 from fastapi import FastAPI, Request
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes
+from database.db import init_db, register_user, get_promo_count
 
-# Імпорт ваших сервісів (переконайтеся, що шляхи вірні)
-from services.funding_service import get_funding_rates, get_all_exchanges
-from database.db_manager import init_db
-
-# Налаштування логування
+# Логування для відстеження помилок у консолі Render
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-load_dotenv()
-
-# Константи
+# Твої ENV змінні
 TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = os.getenv("ADMIN_ID") # Ваш ID для сповіщень
-WEBHOOK_URL = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/webhook" if os.getenv('RENDER_EXTERNAL_HOSTNAME') else None
+BASE_URL = os.getenv("WEBHOOK_URL") 
 
 app = FastAPI()
-tg_application = None
-
-# --- ЛОГІКА СКАНЕРА ---
-
-async def scan_market_task(context: ContextTypes.DEFAULT_TYPE):
-    """Фонове завдання, яке перевіряє всі біржі на аномальний фандинг"""
-    threshold = 0.03  # Поріг сповіщення: 0.03% або -0.03%
-    exchanges = ["binance", "bybit", "mexc", "bitget", "kucoin", "bingx", "gateio"]
-    
-    logger.info("🔍 Початок фонового сканування ринку...")
-    found_anomalies = []
-
-    for ex_id in exchanges:
-        try:
-            rates = await get_funding_rates(ex_id)
-            if not rates:
-                continue
-                
-            for symbol, rate in rates.items():
-                if abs(rate) >= threshold:
-                    found_anomalies.append({
-                        "ex": ex_id.upper(),
-                        "sym": symbol,
-                        "rate": rate
-                    })
-        except Exception as e:
-            logger.error(f"Помилка при скануванні {ex_id}: {e}")
-
-    if found_anomalies and ADMIN_ID:
-        # Сортуємо за модулем ставки (найвищі зверху)
-        found_anomalies.sort(key=lambda x: abs(x['rate']), reverse=True)
-        
-        message = "🚨 **АНОМАЛЬНИЙ ФАНДИНГ ВИЯВЛЕНО** 🚨\n\n"
-        for item in found_anomalies[:15]: # Обмежуємо топ-15, щоб повідомлення не було завеликим
-            emoji = "🟢" if item['rate'] > 0 else "🔴"
-            message += f"{emoji} `{item['ex']}`: {item['sym']} — `{item['rate']:.4f}%` \n"
-        
-        try:
-            await context.bot.send_message(chat_id=ADMIN_ID, text=message, parse_mode="Markdown")
-            logger.info("✅ Сповіщення про аномалії надіслано адміну.")
-        except Exception as e:
-            logger.error(f"Не вдалося надіслати сповіщення: {e}")
-
-# --- ОБРОБНИКИ ТЕЛЕГРАМ ---
+tg_app = None
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [InlineKeyboardButton("Binance", callback_data='funding_binance'),
-         InlineKeyboardButton("Bybit", callback_data='funding_bybit')],
-        [InlineKeyboardButton("MEXC", callback_data='funding_mexc'),
-         InlineKeyboardButton("Bitget", callback_data='funding_bitget')],
-        [InlineKeyboardButton("KuCoin", callback_data='funding_kucoin'),
-         InlineKeyboardButton("BingX", callback_data='funding_bingx')],
-        [InlineKeyboardButton("Gate.io", callback_data='funding_gateio')]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("Оберіть біржу для перевірки ставок фінансування:", reply_markup=reply_markup)
-
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+    user_id = update.effective_user.id
+    username = update.effective_user.username
     
-    if query.data.startswith('funding_'):
-        ex_id = query.data.split('_')[1]
-        await query.edit_message_text(f"⏳ Отримую дані з {ex_id.upper()}...")
-        
-        rates = await get_funding_rates(ex_id)
-        if not rates:
-            await query.edit_message_text(f"❌ Не вдалося отримати дані з {ex_id.upper()}. Спробуйте пізніше.")
-            return
-
-        # Сортування: найбільші ставки зверху
-        sorted_rates = sorted(rates.items(), key=lambda x: abs(x[1]), reverse=True)[:10]
-        
-        response = f"📊 **Топ-10 ставок на {ex_id.upper()}:**\n\n"
-        for symbol, rate in sorted_rates:
-            emoji = "🟢" if rate > 0 else "🔴"
-            response += f"{emoji} `{symbol}`: `{rate:.4f}%` \n"
-        
-        await query.edit_message_text(response, parse_mode="Markdown")
-
-# --- FASTAPI & STARTUP ---
+    # Логіка реєстрації: Free або Premium (Early Bird)
+    plan = await register_user(user_id, username)
+    promo_left = await get_promo_count()
+    
+    if plan == "Premium":
+        text = (
+            f"Hi! You are an **Early Bird**! 🏃‍♂️\n"
+            f"You've received **Premium Access** (1 month) for free.\n"
+            f"Spots left: {promo_left}/500\n\n"
+            "Go to Settings to configure your Timezone and Threshold."
+        )
+    else:
+        text = (
+            "Welcome! You are on the **Free Plan**.\n"
+            "Bybit only, 1.5% threshold, hidden coin names.\n\n"
+            "Upgrade to Premium ($50/month) to unlock all exchanges and data."
+        )
+    
+    await update.message.reply_text(text, parse_mode="Markdown")
 
 @app.on_event("startup")
-async def on_startup():
-    global tg_application
-    await init_db()
+async def startup():
+    global tg_app
+    await init_db() # Запуск бази даних
     
-    tg_application = Application.builder().token(TOKEN).build()
-    tg_application.add_handler(CommandHandler("start", start))
-    tg_application.add_handler(CallbackQueryHandler(button_handler))
+    tg_app = Application.builder().token(TOKEN).build()
+    tg_app.add_handler(CommandHandler("start", start))
     
-    # Налаштування планувальника (Сканер)
-    scheduler = AsyncIOScheduler()
-    # Запускаємо scan_market_task кожні 15 хвилин
-    scheduler.add_job(scan_market_task, 'interval', minutes=15, args=[tg_application])
-    scheduler.start()
+    await tg_app.initialize()
     
-    await tg_application.initialize()
-    if WEBHOOK_URL:
-        await tg_application.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
-        logger.info(f"🚀 Webhook set to {WEBHOOK_URL}/webhook")
-    await tg_application.start()
-    logger.info("✅ Бот та Сканер запущені!")
+    # Корекція шляху вебхука (щоб уникнути 404)
+    final_webhook_url = BASE_URL if BASE_URL.endswith("/webhook") else f"{BASE_URL}/webhook"
+    
+    await tg_app.bot.set_webhook(url=final_webhook_url)
+    logger.info(f"🚀 Webhook address: {final_webhook_url}")
+    await tg_app.start()
 
 @app.post("/webhook")
 async def webhook_handler(request: Request):
-    update = Update.de_json(await request.json(), tg_application.bot)
-    await tg_application.process_update(update)
-    return {"status": "ok"}
+    data = await request.json()
+    update = Update.de_json(data, tg_app.bot)
+    await tg_app.process_update(update)
+    return {"ok": True}
 
 @app.get("/")
-async def index():
-    return {"status": "FUBot is running"}
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 10000)))
+async def health():
+    return {"status": "active", "early_bird_left": await get_promo_count()}

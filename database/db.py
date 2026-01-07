@@ -8,7 +8,7 @@ async def init_db():
         os.makedirs("database")
         
     async with aiosqlite.connect(DB_PATH) as db:
-        # Основна таблиця користувачів
+        # Таблиця користувачів
         await db.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
@@ -20,13 +20,23 @@ async def init_db():
                 registration_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
-        # Таблиця обраних бірж
+        # Таблиця вибору бірж
         await db.execute('''
             CREATE TABLE IF NOT EXISTS user_exchanges (
                 user_id INTEGER,
                 exchange_name TEXT,
                 is_enabled INTEGER DEFAULT 1,
                 PRIMARY KEY (user_id, exchange_name)
+            )
+        ''')
+        # Таблиця ставок фандингу
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS fundings (
+                exchange TEXT,
+                symbol TEXT,
+                rate REAL,
+                next_funding_time TIMESTAMP,
+                PRIMARY KEY (exchange, symbol)
             )
         ''')
         await db.commit()
@@ -37,13 +47,9 @@ async def register_user(user_id, username):
             existing = await cursor.fetchone()
             if existing: return existing[0]
         
-        # Реєстрація юзера
         await db.execute("INSERT INTO users (user_id, username) VALUES (?, ?)", (user_id, username))
-        
-        # Додавання всіх 9 бірж за замовчуванням
         exchanges = ["Bybit", "BingX", "Binance", "MEXC", "KuCoin", "Huobi", "Gate.io", "OKX", "Bitget"]
         for ex in exchanges:
             await db.execute("INSERT OR IGNORE INTO user_exchanges (user_id, exchange_name) VALUES (?, ?)", (user_id, ex))
-            
         await db.commit()
         return "Free"

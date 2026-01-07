@@ -1,206 +1,135 @@
-import os
-import aiosqlite
-import datetime
-import httpx
+import os, aiosqlite, httpx
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes, ConversationHandler
 from database.db import DB_PATH
 
-# Константи для станів ConversationHandler
 WAITING_THRESHOLD, WAITING_UTC = 1, 2
+ALL_EXCHANGES = ["binance", "bybit", "okx", "gateio", "bitget", "bingx", "kucoin", "mexc", "htx"]
 
-# Список усіх бірж за ТЗ
-ALL_EXCHANGES = ["Binance", "Bybit", "OKX", "Gateio", "Bitget", "BingX", "Kucoin", "MEXC", "HTX"]
-
-def parse_date(date_str):
-    if not date_str or date_str == "None": return None
-    try:
-        return datetime.datetime.fromisoformat(date_str.replace('Z', '+00:00'))
-    except:
-        return None
-
-async def create_invoice(amount_usd):
-    """Створення інвойсу через Crypto Pay API (CryptoBot)"""
-    token = os.getenv("CRYPTO_BOT_TOKEN")
-    if not token:
-        return None
-    
-    url = "https://pay.cryptobots.run/api/createInvoice"
-    headers = {"Crypto-Pay-API-Token": token}
-    payload = {
-        "asset": "USDT",
-        "amount": str(amount_usd),
-        "description": "FUBot Premium Subscription - 1 Month",
-        "paid_btn_name": "openBot",
-        "paid_btn_url": "https://t.me/your_bot_username" # Замініть на ваш юзернейм
-    }
-    
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.post(url, json=payload, headers=headers)
-            data = response.json()
-            return data.get('result')
-        except Exception as e:
-            print(f"Invoice error: {e}")
-            return None
-
-async def get_settings_keyboard(user_id):
-    keyboard = [
-        [InlineKeyboardButton("Top Fundings 📊", callback_data="show_top")],
-        [InlineKeyboardButton("Exchanges Filter (9) 🏛", callback_data="manage_exchanges")],
-        [InlineKeyboardButton("Set Threshold (%) 📉", callback_data="set_threshold")],
-        [InlineKeyboardButton("Timezone (UTC) 🕒", callback_data="set_tz_manual")],
-        [InlineKeyboardButton("My Profile 👤", callback_data="my_profile"), 
-         InlineKeyboardButton("Premium 💎", callback_data="buy_premium")]
-    ]
-    return InlineKeyboardMarkup(keyboard)
+async def get_settings_keyboard(user_id, plan="FREE"):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 LIVE FUNDINGS", callback_data="show_top")],
+        [InlineKeyboardButton("🏛 EXCHANGES", callback_data="manage_exchanges"),
+         InlineKeyboardButton("📈 THRESHOLD", callback_data="set_threshold")],
+        [InlineKeyboardButton("🔔 ALERT TIME", callback_data="set_alert_time"),
+         InlineKeyboardButton("🕒 TIMEZONE", callback_data="set_tz_manual")],
+        [InlineKeyboardButton("👤 PROFILE", callback_data="my_profile"),
+         InlineKeyboardButton("💎 PREMIUM", callback_data="buy_premium")]
+    ])
 
 async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
     await query.answer()
 
-    if query.data == "main_menu":
-        await query.edit_message_text(
-            "⚙️ **Головне меню та налаштування:**",
-            reply_markup=await get_settings_keyboard(user_id),
-            parse_mode="Markdown"
-        )
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT plan, selected_exchanges, threshold FROM users WHERE user_id = ?", (user_id,)) as c:
+            row = await c.fetchone()
+    
+    plan, sel_ex, thr = row if row else ("FREE", "bybit", 0.1)
+
+    if query.data == "show_top":
+        async with aiosqlite.connect(DB_PATH) as db:
+            ex_list = sel_ex.split(',')
+            # Тільки ті біржі, що обрав юзер
+            placeholders = ','.join(['?'] * len(ex_list))
+            async with db.execute(f"SELECT exchange, symbol, rate FROM fundings WHERE exchange IN ({placeholders}) ORDER BY ABS(rate) DESC LIMIT 15", ex_list) as c:
+                rows = await c.fetchall()
+
+        txt = "📊 **LIVE FUNDING RATES**\n\n"
+        txt += "<code>EX  | SYMBOL  | RATE %</code>\n"
+        txt += "<code>-----------------------</code>\n"
+        for ex, sym, rate in rows:
+            display_sym = sym.split(':')[0].replace('/USDT', '')
+            # FREE LOGIC: Blur symbol if rate >= 1.5%
+            if plan == "FREE" and abs(rate) >= 1.5:
+                display_sym = "******"
+            
+            emoji = "🟢" if rate > 0 else "🔴"
+            txt += f"<code>{ex[:2].upper():<3} | {display_sym:<7} | {rate:>+7.4f}%</code> {emoji}\n"
+        
+        kb = [[InlineKeyboardButton("🔄 Refresh", callback_data="show_top")], [InlineKeyboardButton("« Back", callback_data="main_menu")]]
+        await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
 
     elif query.data == "manage_exchanges":
+        if plan == "FREE":
+            await query.answer("Free Plan is limited to Bybit only.", show_alert=True)
+            return
+        # Побудова кнопок для 9 бірж
+        kb = []
+        for i in range(0, len(ALL_EXCHANGES), 2):
+            row_btns = []
+            for ex in ALL_EXCHANGES[i:i+2]:
+                status = "✅" if ex in sel_ex.split(',') else "❌"
+                row_btns.append(InlineKeyboardButton(f"{status} {ex.upper()}", callback_data=f"toggle_{ex}"))
+            kb.append(row_btns)
+        kb.append([InlineKeyboardButton("« Back", callback_data="main_menu")])
+        await query.edit_message_text("🏛 **Select Exchanges:**", reply_markup=InlineKeyboardMarkup(kb))
+
+    elif query.data.startswith("toggle_"):
+        ex_to_toggle = query.data.replace("toggle_", "")
+        current = sel_ex.split(',')
+        if ex_to_toggle in current: current.remove(ex_to_toggle)
+        else: current.append(ex_to_toggle)
+        new_val = ",".join(filter(None, current))
         async with aiosqlite.connect(DB_PATH) as db:
-            async with db.execute("SELECT plan FROM users WHERE user_id = ?", (user_id,)) as c:
-                row = await c.fetchone()
-                plan = row[0] if row else "Free"
-        
-        status_text = "🏛 **Доступні біржі:**\n\n"
-        for ex in ALL_EXCHANGES:
-            status_text += f"✅ {ex}\n"
-        
-        if plan == "Free":
-            status_text += "\n⚠️ *У Free версії дані відображаються лише для Bybit. Придбайте Premium для розблокування всіх 9 бірж.*"
-        
-        await query.edit_message_text(
-            status_text,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Назад", callback_data="main_menu")]]),
-            parse_mode="Markdown"
-        )
+            await db.execute("UPDATE users SET selected_exchanges = ? WHERE user_id = ?", (new_val, user_id))
+            await db.commit()
+        await handle_callbacks(update, context)
 
-    elif query.data == "my_profile":
+    elif query.data == "set_alert_time":
+        times = [5, 15, 30, 60, 120, 240]
+        kb = []
+        for t in times:
+            label = f"{t}m" if t < 60 else f"{t//60}h"
+            kb.append(InlineKeyboardButton(label, callback_data=f"save_alert_{t}"))
+        reply_kb = [kb[i:i+3] for i in range(0, len(kb), 3)]
+        reply_kb.append([InlineKeyboardButton("« Back", callback_data="main_menu")])
+        await query.edit_message_text("🔔 **Alert timing:**\nChoose how many minutes before settlement:", reply_markup=InlineKeyboardMarkup(reply_kb))
+
+    elif query.data.startswith("save_alert_"):
+        m = int(query.data.split('_')[-1])
         async with aiosqlite.connect(DB_PATH) as db:
-            async with db.execute("SELECT plan, expiry_date, threshold, timezone FROM users WHERE user_id = ?", (user_id,)) as c:
-                row = await c.fetchone()
-        
-        if row:
-            plan, expiry, thr, utc = row
-            exp_str = f"\nДіє до: `{expiry[:10]}`" if expiry else ""
-            text = (
-                f"👤 **Мій профіль**\n\n"
-                f"План: **{plan}**{exp_str}\n"
-                f"Поріг алерту: `{thr}%`\n"
-                f"Часовий пояс: `UTC {utc:+}`"
-            )
-        else:
-            text = "Помилка завантаження профілю."
+            await db.execute("UPDATE users SET alert_time = ? WHERE user_id = ?", (m, user_id))
+            await db.commit()
+        await query.answer(f"Alerts set to {m} minutes before.")
+        await handle_callbacks(update, context)
 
-        await query.edit_message_text(
-            text,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Назад", callback_data="main_menu")]]),
-            parse_mode="Markdown"
-        )
+    elif query.data == "main_menu":
+        await query.edit_message_text("⚙️ **Dashboard:**", reply_markup=await get_settings_keyboard(user_id, plan), parse_mode="Markdown")
 
-    elif query.data == "buy_premium":
-        text = (
-            "💎 **Premium статус**\n\n"
-            "• Доступ до 9 бірж (Binance, Bybit, OKX...)\n"
-            "• Миттєві сповіщення (Alerts)\n"
-            "• Перегляд прихованих монет з високим фандингом\n\n"
-            "Вартість: **50 USDT / місяць**"
-        )
-        kb = [
-            [InlineKeyboardButton("Оплатити через CryptoBot 💳", callback_data="pay_50_usdt")],
-            [InlineKeyboardButton("« Назад", callback_data="main_menu")]
-        ]
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
-
-    elif query.data == "pay_50_usdt":
-        invoice = await create_invoice(50)
-        if invoice:
-            kb = [
-                [InlineKeyboardButton("Перейти до оплати 💸", url=invoice['pay_url'])],
-                [InlineKeyboardButton("« Назад", callback_data="main_menu")]
-            ]
-            await query.edit_message_text(
-                f"✅ **Рахунок створено!**\n\nСума: 50 USDT\nПісля оплати статус оновиться протягом хвилини.",
-                reply_markup=InlineKeyboardMarkup(kb),
-                parse_mode="Markdown"
-            )
-        else:
-            await query.edit_message_text("❌ Помилка платіжної системи. Спробуйте пізніше або зверніться до адміна.")
-
-    elif query.data == "show_top":
-        await show_top_fundings(query, user_id)
-
-async def show_top_fundings(query, user_id):
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute("SELECT plan, timezone FROM users WHERE user_id = ?", (user_id,)) as c:
-            row = await c.fetchone()
-            plan, user_utc = row if row else ("Free", 0.0)
-        
-        async with db.execute("SELECT exchange, symbol, rate, next_funding_time FROM fundings ORDER BY ABS(rate) DESC LIMIT 15") as c:
-            rows = await c.fetchall()
-
-    text = f"📊 **Top Fundings ({plan})**\n`Ex | Symbol  | Rate   | Time`\n"
-    text += "⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n"
-    
-    if not rows:
-        text += "Дані ще завантажуються..."
-    else:
-        for ex, sym, rate, n_time in rows:
-            # Логіка приховування за планом
-            is_restricted = (plan == "Free" and ex.lower() != "bybit")
-            display_sym = "HIDDEN" if is_restricted else sym[:7]
-            
-            dt = parse_date(n_time)
-            time_str = (dt + datetime.timedelta(hours=user_utc)).strftime("%H:%M") if dt else "--:--"
-            
-            text += f"`{ex[:2].upper()} | {display_sym:<7} | {rate:+.3f}% | {time_str}`\n"
-    
-    await query.edit_message_text(
-        text, 
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Назад", callback_data="main_menu")]]), 
-        parse_mode="Markdown"
-    )
-
-# Conversation states logic
-async def start_threshold_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.callback_query.edit_message_text("🔢 Введіть новий поріг % (наприклад: 1.5):")
+# Threshold & UTC Conversation handlers English versions
+async def start_threshold_input(update, context):
+    await update.callback_query.edit_message_text("🔢 **Enter threshold %** (e.g. 0.1):")
     return WAITING_THRESHOLD
 
-async def start_utc_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.callback_query.edit_message_text("🕒 Введіть ваш UTC зсув (наприклад: 2 або -5):")
-    return WAITING_UTC
-
-async def save_threshold(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def save_threshold(update, context):
     try:
         val = float(update.message.text.replace(',', '.'))
+        # FREE limit
         async with aiosqlite.connect(DB_PATH) as db:
+            async with db.execute("SELECT plan FROM users WHERE user_id = ?", (update.effective_user.id,)) as c:
+                plan = (await c.fetchone())[0]
+            if plan == "FREE" and val > 1.5:
+                await update.message.reply_text("❌ Max threshold for Free Plan is 1.5%. Upgrade to Premium!")
+                return ConversationHandler.END
             await db.execute("UPDATE users SET threshold = ? WHERE user_id = ?", (val, update.effective_user.id))
             await db.commit()
-        await update.message.reply_text(f"✅ Поріг збережено: {val}%", reply_markup=await get_settings_keyboard(update.effective_user.id))
-        return ConversationHandler.END
-    except:
-        await update.message.reply_text("❌ Помилка. Введіть число (наприклад 1.2)")
-        return WAITING_THRESHOLD
+        await update.message.reply_text(f"✅ Threshold set to {val}%", reply_markup=await get_settings_keyboard(update.effective_user.id, plan))
+    except: pass
+    return ConversationHandler.END
 
-async def save_utc(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# UTC manual input similarly...
+async def start_utc_input(update, context):
+    await update.callback_query.edit_message_text("🕒 **Enter UTC offset** (e.g. 2 for Kyiv):")
+    return WAITING_UTC
+
+async def save_utc(update, context):
     try:
-        val = float(update.message.text.replace('+', ''))
+        val = float(update.message.text)
         async with aiosqlite.connect(DB_PATH) as db:
             await db.execute("UPDATE users SET timezone = ? WHERE user_id = ?", (val, update.effective_user.id))
             await db.commit()
-        await update.message.reply_text(f"✅ Час оновлено: UTC {val:+}", reply_markup=await get_settings_keyboard(update.effective_user.id))
-        return ConversationHandler.END
-    except:
-        await update.message.reply_text("❌ Помилка. Введіть число (наприклад 2)")
-        return WAITING_UTC
+        await update.message.reply_text(f"✅ Timezone set to UTC{val:+}")
+    except: pass
+    return ConversationHandler.END

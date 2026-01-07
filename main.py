@@ -17,7 +17,6 @@ async def lifespan(app: FastAPI):
     
     tg_app = Application.builder().token(os.getenv("BOT_TOKEN")).build()
     
-    # Налаштування діалогів для введення тексту
     conv = ConversationHandler(
         entry_points=[
             CallbackQueryHandler(bot_logic.start_threshold_input, pattern="^set_threshold$"),
@@ -46,11 +45,8 @@ tg_app = None
 async def start(update, context):
     user = update.effective_user
     plan = await register_user(user.id, user.username)
-    await update.message.reply_text(
-        f"🚀 **Funding Bot Online**\nPlan: {plan}", 
-        reply_markup=await bot_logic.get_settings_keyboard(user.id),
-        parse_mode="Markdown"
-    )
+    text = f"🚀 **Funding Bot Online**\n\nWelcome! You are part of the Early Bird promo.\nPlan: **{plan}**"
+    await update.message.reply_text(text, reply_markup=await bot_logic.get_settings_keyboard(user.id), parse_mode="Markdown")
 
 @app.post("/webhook")
 async def webhook_handler(request: Request):

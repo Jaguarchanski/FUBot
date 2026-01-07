@@ -1,26 +1,49 @@
 import os
 import logging
+import uvicorn
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 from database.db import init_db, register_user, get_promo_count
 
-# Логування для відстеження помилок у консолі Render
+# Налаштування логів
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Твої ENV змінні
 TOKEN = os.getenv("BOT_TOKEN")
-BASE_URL = os.getenv("WEBHOOK_URL") 
+BASE_URL = os.getenv("WEBHOOK_URL")
 
-app = FastAPI()
+# Використовуємо Lifespan замість on_event
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global tg_app
+    await init_db()
+    
+    tg_app = Application.builder().token(TOKEN).build()
+    tg_app.add_handler(CommandHandler("start", start))
+    
+    await tg_app.initialize()
+    
+    # Корекція Webhook
+    final_webhook_url = BASE_URL if BASE_URL.endswith("/webhook") else f"{BASE_URL}/webhook"
+    await tg_app.bot.set_webhook(url=final_webhook_url)
+    
+    logger.info(f"🚀 Webhook set to: {final_webhook_url}")
+    await tg_app.start()
+    
+    yield
+    
+    await tg_app.stop()
+    await tg_app.shutdown()
+
+app = FastAPI(lifespan=lifespan)
 tg_app = None
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     username = update.effective_user.username
     
-    # Логіка реєстрації: Free або Premium (Early Bird)
     plan = await register_user(user_id, username)
     promo_left = await get_promo_count()
     
@@ -29,33 +52,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Hi! You are an **Early Bird**! 🏃‍♂️\n"
             f"You've received **Premium Access** (1 month) for free.\n"
             f"Spots left: {promo_left}/500\n\n"
-            "Go to Settings to configure your Timezone and Threshold."
+            "Use Settings to configure your Timezone and Threshold."
         )
     else:
         text = (
             "Welcome! You are on the **Free Plan**.\n"
-            "Bybit only, 1.5% threshold, hidden coin names.\n\n"
-            "Upgrade to Premium ($50/month) to unlock all exchanges and data."
+            "Bybit only, 1.5% threshold, hidden coins.\n\n"
+            "Upgrade to Premium for $50/month to unlock everything."
         )
-    
     await update.message.reply_text(text, parse_mode="Markdown")
-
-@app.on_event("startup")
-async def startup():
-    global tg_app
-    await init_db() # Запуск бази даних
-    
-    tg_app = Application.builder().token(TOKEN).build()
-    tg_app.add_handler(CommandHandler("start", start))
-    
-    await tg_app.initialize()
-    
-    # Корекція шляху вебхука (щоб уникнути 404)
-    final_webhook_url = BASE_URL if BASE_URL.endswith("/webhook") else f"{BASE_URL}/webhook"
-    
-    await tg_app.bot.set_webhook(url=final_webhook_url)
-    logger.info(f"🚀 Webhook address: {final_webhook_url}")
-    await tg_app.start()
 
 @app.post("/webhook")
 async def webhook_handler(request: Request):
@@ -66,4 +71,9 @@ async def webhook_handler(request: Request):
 
 @app.get("/")
 async def health():
-    return {"status": "active", "early_bird_left": await get_promo_count()}
+    return {"status": "running"}
+
+if __name__ == "__main__":
+    # Render передає порт через змінну оточення PORT
+    port = int(os.environ.get("PORT", 10000))
+    uvicorn.run(app, host="0.0.0.0", port=port)

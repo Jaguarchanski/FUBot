@@ -8,32 +8,28 @@ async def init_db():
         os.makedirs("database")
         
     async with aiosqlite.connect(DB_PATH) as db:
+        # Основна таблиця користувачів
         await db.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
                 username TEXT,
                 plan TEXT DEFAULT 'Free',
                 threshold REAL DEFAULT 1.5,
-                timezone INTEGER DEFAULT 0,
+                timezone REAL DEFAULT 0.0,
                 alert_lead_time INTEGER DEFAULT 15,
                 registration_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        # Таблиця обраних бірж
         await db.execute('''
-            CREATE TABLE IF NOT EXISTS global_settings (
-                key TEXT PRIMARY KEY, value INTEGER
+            CREATE TABLE IF NOT EXISTS user_exchanges (
+                user_id INTEGER,
+                exchange_name TEXT,
+                is_enabled INTEGER DEFAULT 1,
+                PRIMARY KEY (user_id, exchange_name)
             )
         ''')
-        await db.execute('''
-            INSERT OR IGNORE INTO global_settings (key, value) VALUES ('promo_left', 500)
-        ''')
         await db.commit()
-
-async def get_promo_count():
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute("SELECT value FROM global_settings WHERE key = 'promo_left'") as cursor:
-            row = await cursor.fetchone()
-            return row[0] if row else 0
 
 async def register_user(user_id, username):
     async with aiosqlite.connect(DB_PATH) as db:
@@ -41,11 +37,13 @@ async def register_user(user_id, username):
             existing = await cursor.fetchone()
             if existing: return existing[0]
         
-        count = await get_promo_count()
-        plan = "Premium" if count > 0 else "Free"
-        if plan == "Premium":
-            await db.execute("UPDATE global_settings SET value = value - 1 WHERE key = 'promo_left'")
+        # Реєстрація юзера
+        await db.execute("INSERT INTO users (user_id, username) VALUES (?, ?)", (user_id, username))
         
-        await db.execute("INSERT INTO users (user_id, username, plan) VALUES (?, ?, ?)", (user_id, username, plan))
+        # Додавання всіх 9 бірж за замовчуванням
+        exchanges = ["Bybit", "BingX", "Binance", "MEXC", "KuCoin", "Huobi", "Gate.io", "OKX", "Bitget"]
+        for ex in exchanges:
+            await db.execute("INSERT OR IGNORE INTO user_exchanges (user_id, exchange_name) VALUES (?, ?)", (user_id, ex))
+            
         await db.commit()
-        return plan
+        return "Free"
